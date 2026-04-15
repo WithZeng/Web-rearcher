@@ -32,7 +32,7 @@ export function connectPipeline(
           type: raw.stage === 'done' ? 'complete' : raw.stage === 'error' ? 'error' : 'stage',
           stage: raw.stage,
           progress: raw.progress,
-          message: raw.label || raw.detail,
+          message: raw.detail ?? raw.label,
           data: {
             papers_found: raw.papers_found,
             papers_passed: raw.papers_passed,
@@ -60,7 +60,7 @@ export function connectPipeline(
       } else {
         onMessage({
           type: 'error',
-          message: '与服务器的连接已断开，任务可能仍在后台运行。请刷新页面或检查服务器状态。',
+          message: '与服务器的连接已断开。请刷新页面或检查后端服务状态。',
         });
         onClose?.();
       }

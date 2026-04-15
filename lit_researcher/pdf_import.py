@@ -95,6 +95,7 @@ async def extract_uploaded_pdfs(
     files: list[tuple[str, bytes]],
     on_progress: Callable[[int, int, dict[str, Any]], None] | None = None,
     max_concurrent: int = 2,
+    cancel_check: Callable[[], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Parse uploaded PDF files into pipeline-ready paper objects."""
 
@@ -103,7 +104,11 @@ async def extract_uploaded_pdfs(
 
     async def _run_one(index: int, file_name: str, pdf_bytes: bytes) -> tuple[int, dict[str, Any]]:
         async with sem:
+            if cancel_check:
+                cancel_check()
             paper = await asyncio.to_thread(_extract_single_pdf, file_name, pdf_bytes)
+            if cancel_check:
+                cancel_check()
             return index, paper
 
     tasks = [
@@ -114,6 +119,8 @@ async def extract_uploaded_pdfs(
     results: list[dict[str, Any] | None] = [None] * total
     done = 0
     for task in asyncio.as_completed(tasks):
+        if cancel_check:
+            cancel_check()
         index, paper = await task
         results[index] = paper
         done += 1

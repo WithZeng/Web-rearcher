@@ -1,10 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Check, FileText, Download, Filter, Brain, ShieldCheck, Clock, XCircle } from "lucide-react";
-import { useAppStore } from "@/lib/store";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  Brain,
+  Check,
+  Clock,
+  Download,
+  FileText,
+  Filter,
+  ShieldCheck,
+  XCircle,
+} from "lucide-react";
 import { api } from "@/lib/api";
+import { useAppStore } from "@/lib/store";
 
 const STAGES = [
   { key: "planner", label: "规划", icon: Brain },
@@ -24,7 +33,7 @@ function stageIndex(stage: string): number {
     reviewer_retry: "reviewer",
   };
   const key = mapped[stage] ?? stage;
-  const idx = STAGES.findIndex((s) => s.key === key);
+  const idx = STAGES.findIndex((item) => item.key === key);
   return idx === -1 ? -1 : idx;
 }
 
@@ -39,8 +48,8 @@ function formatElapsed(ms: number): string {
 
 export function PipelineProgress() {
   const { currentStage, stageMessage, progress, stageData, activityText, running, startedAt, taskId } =
-    useAppStore((s) => s.pipeline);
-  const setPipelineField = useAppStore((s) => s.setPipelineField);
+    useAppStore((state) => state.pipeline);
+  const setPipelineField = useAppStore((state) => state.setPipelineField);
   const safeStageData = stageData ?? {};
   const activeIdx = stageIndex(currentStage);
   const isComplete = currentStage === "complete" || currentStage === "done";
@@ -52,14 +61,15 @@ export function PipelineProgress() {
     if (!taskId || cancelling) return;
     setCancelling(true);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-      await api.pipeline.cancel(taskId).finally(() => clearTimeout(timeout));
-    } catch {
-      /* ignore - cancel the UI regardless */
-    } finally {
+      await api.pipeline.cancel(taskId);
       setPipelineField("running", false);
+      setPipelineField("currentStage", "error");
+      setPipelineField("stageMessage", "任务已取消");
+      setPipelineField("activityText", "");
       setPipelineField("error", "任务已取消");
+    } catch (error) {
+      setPipelineField("error", error instanceof Error ? error.message : "取消任务失败");
+    } finally {
       setCancelling(false);
     }
   }, [taskId, cancelling, setPipelineField]);
@@ -82,11 +92,10 @@ export function PipelineProgress() {
     { label: "检索到", value: safeStageData.papers_found, unit: "篇" },
     { label: "通过筛选", value: safeStageData.papers_passed, unit: "篇" },
     { label: "已提取", value: safeStageData.rows_extracted, unit: "条" },
-  ].filter((m) => m.value != null && m.value > 0);
+  ].filter((item) => item.value != null && item.value > 0);
 
   return (
     <div className="w-full space-y-3">
-      {/* Stepper */}
       <div className="relative flex items-center justify-between px-2">
         <div className="absolute top-3 left-6 right-6 h-0.5 bg-zinc-700" />
         <motion.div
@@ -102,24 +111,17 @@ export function PipelineProgress() {
           transition={{ duration: 0.5, ease: "easeInOut" }}
         />
 
-        {STAGES.map((stage, i) => {
-          const completed = i < activeIdx || isComplete;
-          const active = i === activeIdx && !isComplete;
+        {STAGES.map((stage, index) => {
+          const completed = index < activeIdx || isComplete;
+          const active = index === activeIdx && !isComplete;
 
           return (
-            <div
-              key={stage.key}
-              className="relative z-10 flex flex-col items-center gap-1"
-            >
+            <div key={stage.key} className="relative z-10 flex flex-col items-center gap-1">
               {active ? (
                 <motion.div
                   className="flex size-6 items-center justify-center rounded-full bg-blue-600 shadow-[0_0_8px_rgba(59,130,246,0.6)]"
                   animate={{ scale: [1, 1.15, 1] }}
-                  transition={{
-                    duration: 1.4,
-                    repeat: Infinity,
-                    ease: "easeInOut",
-                  }}
+                  transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
                 >
                   <div className="size-2 rounded-full bg-white" />
                 </motion.div>
@@ -150,7 +152,6 @@ export function PipelineProgress() {
         })}
       </div>
 
-      {/* Progress bar with percentage and elapsed time */}
       <div className="flex items-center gap-3">
         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-800">
           <motion.div
@@ -183,7 +184,6 @@ export function PipelineProgress() {
         )}
       </div>
 
-      {/* Stage message + live metrics */}
       <div className="flex items-center justify-between">
         <AnimatePresence mode="wait">
           <motion.p
@@ -195,12 +195,11 @@ export function PipelineProgress() {
             transition={{ duration: 0.2 }}
           >
             {isComplete
-              ? `✓ 流水线已完成${startedAt ? ` (耗时 ${formatElapsed(elapsed)})` : ""}`
+              ? `流水线已完成${startedAt ? ` (耗时 ${formatElapsed(elapsed)})` : ""}`
               : stageMessage || "等待中..."}
           </motion.p>
         </AnimatePresence>
 
-        {/* Live counters */}
         {metrics.length > 0 && (
           <motion.div
             className="flex items-center gap-4"
@@ -208,26 +207,25 @@ export function PipelineProgress() {
             animate={{ opacity: 1 }}
             transition={{ duration: 0.3 }}
           >
-            {metrics.map((m) => (
-              <span key={m.label} className="text-xs text-zinc-500">
-                {m.label}{" "}
+            {metrics.map((item) => (
+              <span key={item.label} className="text-xs text-zinc-500">
+                {item.label}{" "}
                 <motion.span
-                  key={m.value}
+                  key={item.value}
                   className="font-medium tabular-nums text-zinc-200"
                   initial={{ opacity: 0, y: -4 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.2 }}
                 >
-                  {m.value}
+                  {item.value}
                 </motion.span>{" "}
-                {m.unit}
+                {item.unit}
               </span>
             ))}
           </motion.div>
         )}
       </div>
 
-      {/* Real-time activity ticker */}
       <AnimatePresence mode="wait">
         {running && activityText && (
           <motion.div

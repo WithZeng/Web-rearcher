@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ChevronDown,
+  ChevronUp,
   FileText,
   Files,
   Loader2,
@@ -33,6 +35,9 @@ function isPdfFile(file: File): boolean {
   return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 }
 
+const COLLAPSED_FILE_COUNT = 3;
+const AUTO_COLLAPSE_THRESHOLD = 4;
+
 export default function PdfImportPage() {
   const pipeline = useAppStore((state) => state.pipeline);
   const setPipelineField = useAppStore((state) => state.setPipelineField);
@@ -44,6 +49,7 @@ export default function PdfImportPage() {
   const [llmConcurrency, setLlmConcurrency] = useState(5);
   const [mode, setMode] = useState<"single" | "multi">("multi");
   const [selectedPaper, setSelectedPaper] = useState<Record<string, unknown> | null>(null);
+  const [filesExpanded, setFilesExpanded] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const wsCloseRef = useRef<(() => void) | null>(null);
@@ -145,6 +151,11 @@ export default function PdfImportPage() {
     () => files.reduce((sum, file) => sum + file.size, 0),
     [files],
   );
+  const shouldCollapseFiles = files.length >= AUTO_COLLAPSE_THRESHOLD;
+  const visibleFiles = shouldCollapseFiles && !filesExpanded
+    ? files.slice(0, COLLAPSED_FILE_COUNT)
+    : files;
+  const hiddenFileCount = files.length - visibleFiles.length;
 
   const showProgress = pipeline.running || pipeline.rows.length > 0;
 
@@ -243,7 +254,10 @@ export default function PdfImportPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setFiles([])}
+                    onClick={() => {
+                      setFiles([]);
+                      setFilesExpanded(false);
+                    }}
                     className="text-zinc-400 hover:text-zinc-200"
                   >
                     <Trash2 className="size-3.5" data-icon="inline-start" />
@@ -252,7 +266,7 @@ export default function PdfImportPage() {
                 </div>
 
                 <div className="space-y-2">
-                  {files.map((file) => (
+                  {visibleFiles.map((file) => (
                     <div
                       key={`${file.name}:${file.size}:${file.lastModified}`}
                       className="flex items-center justify-between rounded-2xl border border-white/8 bg-white/[0.02] px-4 py-3"
@@ -285,6 +299,29 @@ export default function PdfImportPage() {
                     </div>
                   ))}
                 </div>
+
+                {shouldCollapseFiles && (
+                  <div className="mt-3 flex items-center justify-between rounded-2xl border border-white/8 bg-white/[0.02] px-4 py-3">
+                    <p className="text-xs text-zinc-500">
+                      {filesExpanded
+                        ? `已展开全部 ${files.length} 个文件`
+                        : `还有 ${hiddenFileCount} 个文件已折叠，避免列表过长`}
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setFilesExpanded((current) => !current)}
+                      className="text-zinc-300 hover:text-zinc-100"
+                    >
+                      {filesExpanded ? (
+                        <ChevronUp className="size-3.5" data-icon="inline-start" />
+                      ) : (
+                        <ChevronDown className="size-3.5" data-icon="inline-start" />
+                      )}
+                      {filesExpanded ? "收起" : "展开全部"}
+                    </Button>
+                  </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>

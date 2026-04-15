@@ -12,37 +12,34 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from lit_researcher.agents.base import PipelineContext
 from lit_researcher.agents.orchestrator import run_pipeline
-from lit_researcher.ui_helpers import (
-    dois_to_papers,
-    save_task,
-)
-from lit_researcher.fetch import fetch_all
 from lit_researcher.extract import extract_batch, extract_batch_with_progress
+from lit_researcher.fetch import fetch_all
 from lit_researcher.pdf_import import extract_uploaded_pdfs
+from lit_researcher.ui_helpers import dois_to_papers, save_task
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 STAGE_META: dict[str, tuple[float, str]] = {
-    "planner":              (0.05, "规划搜索策略"),
-    "search":               (0.15, "检索文献"),
-    "retrieval":            (0.35, "获取全文"),
-    "quality_filter":       (0.50, "质量筛选"),
-    "extraction":           (0.70, "统一提取"),
-    "extraction_sub_agents":(0.75, "子智能体提取"),
-    "extraction_merge":     (0.80, "合并提取结果"),
-    "reviewer":             (0.90, "审查校验"),
-    "reviewer_retry":       (0.95, "重试审查"),
-    "done":                 (1.00, "完成"),
-    "error":                (1.00, "出错"),
+    "planner": (0.05, "规划搜索策略"),
+    "search": (0.15, "检索文献"),
+    "retrieval": (0.35, "获取全文"),
+    "quality_filter": (0.50, "质量筛选"),
+    "extraction": (0.70, "字段提取"),
+    "extraction_sub_agents": (0.75, "子代理提取"),
+    "extraction_merge": (0.80, "合并提取结果"),
+    "reviewer": (0.90, "审查校验"),
+    "reviewer_retry": (0.95, "重试审查"),
+    "done": (1.00, "完成"),
+    "error": (1.00, "出错"),
 }
 
-_TASK_EXPIRE_SECONDS = 1800  # 30 min after completion
+_TASK_EXPIRE_SECONDS = 1800
 _MAX_CONCURRENT_TASKS = 3
 
 
 class CancelledByUser(Exception):
-    """Raised inside the pipeline when the user clicks cancel."""
+    """Raised when the task is cancelled by the user."""
 
 
 @dataclass
@@ -61,16 +58,16 @@ _pipeline_tasks: dict[str, PipelineTask] = {}
 
 
 def _purge_expired_tasks() -> int:
-    """Remove completed tasks older than _TASK_EXPIRE_SECONDS. Returns count removed."""
     now = time.monotonic()
     expired = [
-        tid for tid, entry in _pipeline_tasks.items()
+        task_id
+        for task_id, entry in _pipeline_tasks.items()
         if entry.finished_at is not None
         and (now - entry.finished_at) > _TASK_EXPIRE_SECONDS
         and not entry.ws_connections
     ]
-    for tid in expired:
-        del _pipeline_tasks[tid]
+    for task_id in expired:
+        del _pipeline_tasks[task_id]
     if expired:
         logger.info("Purged %d expired pipeline tasks", len(expired))
     return len(expired)
@@ -78,7 +75,8 @@ def _purge_expired_tasks() -> int:
 
 def _count_running_tasks() -> int:
     return sum(
-        1 for entry in _pipeline_tasks.values()
+        1
+        for entry in _pipeline_tasks.values()
         if entry.task is not None and not entry.task.done()
     )
 
@@ -101,12 +99,18 @@ def _build_stage_msg(stage: str, ctx: PipelineContext | None = None, detail: str
     return msg
 
 
-async def _broadcast(task_id: str, msg: dict, *, ephemeral: bool = False) -> None:
-    """Broadcast a message to all WebSocket connections for a task.
+def _build_progress_msg(stage: str, progress: float, detail: str) -> dict:
+    _, label = STAGE_META.get(stage, (progress, stage))
+    return {
+        "type": "stage",
+        "stage": stage,
+        "progress": round(progress, 4),
+        "label": label,
+        "detail": detail,
+    }
 
-    If *ephemeral* is True the message is sent but NOT stored in the replay
-    buffer (used for high-frequency activity messages).
-    """
+
+async def _broadcast(task_id: str, msg: dict, *, ephemeral: bool = False) -> None:
     entry = _pipeline_tasks.get(task_id)
     if entry is None:
         return
@@ -137,22 +141,19 @@ async def _run_pipeline_task(
 ) -> None:
     entry = _pipeline_tasks[task_id]
     try:
-
-        _pending_broadcasts: list[asyncio.Task] = []
+        pending_broadcasts: list[asyncio.Task] = []
         loop = asyncio.get_running_loop()
 
-        def _check_cancel() -> None:
+        def check_cancel() -> None:
             if entry.cancelled:
                 raise CancelledByUser()
 
         def on_stage(stage: str, ctx: PipelineContext) -> None:
-            _check_cancel()
-            msg = _build_stage_msg(stage, ctx)
-            t = loop.create_task(_broadcast(task_id, msg))
-            _pending_broadcasts.append(t)
+            check_cancel()
+            pending_broadcasts.append(loop.create_task(_broadcast(task_id, _build_stage_msg(stage, ctx))))
 
         def on_activity(text: str) -> None:
-            _check_cancel()
+            check_cancel()
             loop.create_task(_broadcast(task_id, {"type": "activity", "text": text}, ephemeral=True))
 
         rows = await run_pipeline(
@@ -167,23 +168,27 @@ async def _run_pipeline_task(
             max_retries=max_retries,
             mode=mode,
             resume=resume,
-            cancel_check=_check_cancel,
+            cancel_check=check_cancel,
         )
 
-        if entry.cancelled:
-            raise CancelledByUser()
+        check_cancel()
 
-        from lit_researcher.output import filter_empty_rows
         from lit_researcher.blacklist import add_to_blacklist
+        from lit_researcher.output import filter_empty_rows
+
         kept, discarded = filter_empty_rows(rows)
-        failed_dois = [r.get("source_doi") for r in discarded if r.get("source_doi") and r.get("text_source") == "none"]
+        failed_dois = [
+            row.get("source_doi")
+            for row in discarded
+            if row.get("source_doi") and row.get("text_source") == "none"
+        ]
         if failed_dois:
             add_to_blacklist(failed_dois)
 
         entry.result = kept
         save_task(query, kept, databases=databases)
-        if _pending_broadcasts:
-            await asyncio.gather(*_pending_broadcasts, return_exceptions=True)
+        if pending_broadcasts:
+            await asyncio.gather(*pending_broadcasts, return_exceptions=True)
         await _broadcast(task_id, _build_stage_msg("done", detail=f"共 {len(kept)} 条结果"))
     except (asyncio.CancelledError, CancelledByUser):
         entry.cancelled = True
@@ -198,6 +203,7 @@ async def _run_pipeline_task(
         })
     except Exception as exc:
         entry.error = str(exc)
+        logger.exception("Pipeline task failed: %s", task_id)
         await _broadcast(task_id, {
             "type": "stage",
             "stage": "error",
@@ -220,36 +226,38 @@ async def _run_doi_task(
     try:
         papers = dois_to_papers(dois)
 
-        await _broadcast(task_id, _build_stage_msg("retrieval"))
+        await _broadcast(task_id, _build_stage_msg("retrieval", detail=f"准备获取 {len(papers)} 篇论文"))
         papers = await fetch_all(papers, max_concurrent=fetch_concurrency)
 
-        await _broadcast(task_id, _build_stage_msg("extraction"))
+        await _broadcast(task_id, _build_stage_msg("extraction", detail="开始提取 DOI 导入结果"))
         rows = await extract_batch(papers, max_concurrent=llm_concurrency)
 
         from lit_researcher.agents.reviewer import ReviewerAgent
-        from lit_researcher.agents.base import PipelineContext
-        from lit_researcher.output import filter_empty_rows
         from lit_researcher.blacklist import add_to_blacklist
+        from lit_researcher.output import filter_empty_rows
         from lit_researcher.pubchem import batch_lookup, enrich_row
         from lit_researcher.extract import _compute_data_quality
 
-        # PubChem enrichment for DOI import
         drug_names: set[str] = set()
-        for r in rows:
-            name = str(r.get("drug_name") or "").strip()
+        for row in rows:
+            name = str(row.get("drug_name") or "").strip()
             if name:
                 drug_names.add(name)
-        if drug_names:
-            await _broadcast(task_id, {"type": "activity", "text": f"PubChem 查询 {len(drug_names)} 种药物..."}, ephemeral=True)
-            pc_cache, _pc_stats = await batch_lookup(drug_names)
-            for r in rows:
-                name = str(r.get("drug_name") or "").strip()
-                if name and name in pc_cache and pc_cache[name]:
-                    n = enrich_row(r, pc_cache[name])
-                    if n:
-                        r["_data_quality"] = _compute_data_quality(r)
 
-        await _broadcast(task_id, _build_stage_msg("reviewer"))
+        if drug_names:
+            await _broadcast(
+                task_id,
+                {"type": "activity", "text": f"PubChem 查询 {len(drug_names)} 种药物..."},
+                ephemeral=True,
+            )
+            pc_cache, _stats = await batch_lookup(drug_names)
+            for row in rows:
+                name = str(row.get("drug_name") or "").strip()
+                if name and name in pc_cache and pc_cache[name]:
+                    filled = enrich_row(row, pc_cache[name])
+                    if filled:
+                        row["_data_quality"] = _compute_data_quality(row)
+
         review_ctx = PipelineContext(
             query=f"DOI import ({len(dois)} papers)",
             limit=len(dois),
@@ -259,11 +267,16 @@ async def _run_doi_task(
             mode=mode,
         )
         review_ctx.rows = rows
+        await _broadcast(task_id, _build_stage_msg("reviewer", detail="开始审查 DOI 导入结果"))
         review_ctx = await ReviewerAgent().run_timed(review_ctx)
         reviewed = review_ctx.reviewed_rows if review_ctx.reviewed_rows else rows
 
         kept, discarded = filter_empty_rows(reviewed)
-        failed_dois = [r.get("source_doi") for r in discarded if r.get("source_doi") and r.get("text_source") == "none"]
+        failed_dois = [
+            row.get("source_doi")
+            for row in discarded
+            if row.get("source_doi") and row.get("text_source") == "none"
+        ]
         if failed_dois:
             add_to_blacklist(failed_dois)
 
@@ -283,6 +296,7 @@ async def _run_doi_task(
         })
     except Exception as exc:
         entry.error = str(exc)
+        logger.exception("DOI task failed: %s", task_id)
         await _broadcast(task_id, {
             "type": "stage",
             "stage": "error",
@@ -319,22 +333,38 @@ async def _run_pdf_task(
 ) -> None:
     entry = _pipeline_tasks[task_id]
     try:
+        def check_cancel() -> None:
+            if entry.cancelled:
+                raise CancelledByUser()
+
         total_files = len(files)
-        await _broadcast(task_id, {
-            "type": "activity",
-            "text": f"开始解析 {total_files} 个本地 PDF 文件...",
-        }, ephemeral=True)
+        await _broadcast(
+            task_id,
+            _build_progress_msg("retrieval", 0.05, f"正在解析 {total_files} 个本地 PDF 文件"),
+        )
 
         def on_pdf_progress(done: int, total: int, paper: dict[str, Any]) -> None:
-            status = "完成" if not paper.get("parse_error") else "失败"
+            check_cancel()
+            progress = 0.05 + (done / max(total, 1)) * 0.25
             title = str(paper.get("title") or paper.get("file_name") or "Untitled PDF")
-            asyncio.get_running_loop().create_task(_broadcast(
-                task_id,
-                {"type": "activity", "text": f"PDF 解析 [{done}/{total}] {status}: {title[:60]}"},
-                ephemeral=True,
-            ))
+            status = "完成" if not paper.get("parse_error") else "失败"
+            asyncio.get_running_loop().create_task(
+                _broadcast(
+                    task_id,
+                    _build_progress_msg(
+                        "retrieval",
+                        progress,
+                        f"PDF 解析 [{done}/{total}] {status}: {title[:60]}",
+                    ),
+                )
+            )
 
-        papers = await extract_uploaded_pdfs(files, on_progress=on_pdf_progress)
+        papers = await extract_uploaded_pdfs(
+            files,
+            on_progress=on_pdf_progress,
+            cancel_check=check_cancel,
+        )
+        check_cancel()
 
         ctx = PipelineContext(
             query=f"PDF import ({total_files} files)",
@@ -344,6 +374,7 @@ async def _run_pdf_task(
             llm_concurrency=llm_concurrency or 5,
             mode=mode,
         )
+        ctx._cancel_check = check_cancel
         ctx.papers = papers
         ctx.papers_with_text = papers
         await _broadcast(task_id, _build_stage_msg("retrieval", ctx, detail=f"已解析 {len(papers)} 个 PDF"))
@@ -352,9 +383,11 @@ async def _run_pdf_task(
         from lit_researcher.agents.reviewer import ReviewerAgent
 
         ctx = await QualityFilterAgent().run_timed(ctx)
-        await _broadcast(task_id, _build_stage_msg("quality_filter", ctx))
+        await _broadcast(task_id, _build_stage_msg("quality_filter", ctx, detail="已完成质量筛选"))
+        check_cancel()
 
         async def on_extract_complete(done: int, total: int, row: dict[str, Any]) -> None:
+            check_cancel()
             await _broadcast(
                 task_id,
                 {
@@ -376,7 +409,7 @@ async def _run_pdf_task(
             rows = []
 
         quality_by_paper_id = {
-            paper.get("paper_id", ""): paper.get("_quality_scores", {}) or {}
+            str(paper.get("paper_id", "")): paper.get("_quality_scores", {}) or {}
             for paper in ctx.passed_papers
         }
         for row in rows:
@@ -385,11 +418,13 @@ async def _run_pdf_task(
             row["_quality_total"] = scores.get("total_score", 0.0)
 
         ctx.rows = rows
-        await _broadcast(task_id, _build_stage_msg("extraction", ctx))
+        await _broadcast(task_id, _build_stage_msg("extraction", ctx, detail="字段提取完成"))
+        check_cancel()
 
         if ctx.rows:
             ctx = await ReviewerAgent().run_timed(ctx)
-            await _broadcast(task_id, _build_stage_msg("reviewer", ctx))
+            await _broadcast(task_id, _build_stage_msg("reviewer", ctx, detail="结果审查完成"))
+        check_cancel()
 
         reviewed_by_paper_id = {
             str(row.get("paper_id", "")): row
@@ -397,7 +432,10 @@ async def _run_pdf_task(
         }
 
         result_rows: list[dict[str, Any]] = []
+        failed_paper_ids = {str(paper.get("paper_id", "")) for paper in ctx.failed_papers}
+
         for paper in papers:
+            check_cancel()
             paper_id = str(paper.get("paper_id", ""))
             if paper_id in reviewed_by_paper_id:
                 result_rows.append(reviewed_by_paper_id[paper_id])
@@ -407,8 +445,7 @@ async def _run_pdf_task(
                 result_rows.append(_build_pdf_skip_row(paper, str(paper["parse_error"])))
                 continue
 
-            scores = paper.get("_quality_scores", {}) or {}
-            if scores.get("quality_label") == "low_value" or paper in ctx.failed_papers:
+            if paper_id in failed_paper_ids:
                 result_rows.append(_build_pdf_skip_row(paper, "未通过质量筛选"))
                 continue
 
@@ -430,6 +467,7 @@ async def _run_pdf_task(
         })
     except Exception as exc:
         entry.error = str(exc)
+        logger.exception("PDF task failed: %s", task_id)
         await _broadcast(task_id, {
             "type": "stage",
             "stage": "error",
@@ -460,9 +498,16 @@ def start_pipeline_task(
     _pipeline_tasks[task_id] = entry
     entry.task = asyncio.get_running_loop().create_task(
         _run_pipeline_task(
-            task_id, query, limit, databases,
-            fetch_concurrency, llm_concurrency,
-            use_planner, max_retries, mode, resume,
+            task_id,
+            query,
+            limit,
+            databases,
+            fetch_concurrency,
+            llm_concurrency,
+            use_planner,
+            max_retries,
+            mode,
+            resume,
         )
     )
     return task_id
@@ -504,7 +549,6 @@ def start_pdf_task(
 
 
 def cancel_task(task_id: str) -> bool:
-    """Cancel a running pipeline task. Returns True if cancelled."""
     entry = _pipeline_tasks.get(task_id)
     if entry is None:
         return False
@@ -518,7 +562,6 @@ def cancel_task(task_id: str) -> bool:
 
 
 def is_task_cancelled(task_id: str) -> bool:
-    """Check if a task has been cancelled (callable from pipeline stages)."""
     entry = _pipeline_tasks.get(task_id)
     return entry is not None and entry.cancelled
 
