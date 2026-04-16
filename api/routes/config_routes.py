@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 import lit_researcher.config as config
-from lit_researcher.ui_helpers import test_model_connection, apply_model, save_to_env
+from lit_researcher.ui_helpers import (
+    apply_model,
+    import_env_text,
+    save_to_env,
+    test_model_connection,
+)
 
 router = APIRouter()
 
@@ -52,6 +57,13 @@ class TestConnectionRequest(BaseModel):
 class TestConnectionResponse(BaseModel):
     success: bool
     message: str
+
+
+class EnvImportResponse(BaseModel):
+    ok: bool
+    imported: list[str]
+    ignored: list[str]
+    warnings: list[str]
 
 
 @router.get("/")
@@ -136,3 +148,26 @@ async def test_notion():
     from lit_researcher.notion_writer import test_notion_connection
     ok, message = test_notion_connection()
     return TestConnectionResponse(success=ok, message=message)
+
+
+@router.post("/import-env", response_model=EnvImportResponse)
+async def import_env(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="请上传 .env 配置文件")
+    if not file.filename.lower().endswith((".env", ".txt")):
+        raise HTTPException(status_code=400, detail="仅支持上传 .env 或 .txt 文件")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="上传文件为空")
+
+    try:
+        env_text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            env_text = content.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail="文件编码不支持，请使用 UTF-8") from exc
+
+    result = import_env_text(env_text)
+    return EnvImportResponse(ok=True, **result)

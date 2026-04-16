@@ -158,6 +158,14 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(params),
       }),
+    importEnv: (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return request<EnvImportResult>('/api/config/import-env', {
+        method: 'POST',
+        body: formData,
+      });
+    },
     test: (params: ConfigUpdate) =>
       request<{ success: boolean; message: string }>('/api/config/test', {
         method: 'POST',
@@ -307,6 +315,7 @@ export interface MergeResult {
   count: number;
   total_before: number;
   removed: number;
+  dedup_discarded?: number;
   pushed_count: number;
   unpushed_count: number;
   rows: Record<string, unknown>[];
@@ -371,6 +380,13 @@ export interface ConfigUpdate {
   http_proxy?: string;
   ieee_api_key?: string;
   scopus_api_key?: string;
+}
+
+export interface EnvImportResult {
+  ok: boolean;
+  imported: string[];
+  ignored: string[];
+  warnings: string[];
 }
 
 export interface NotionPushResult {

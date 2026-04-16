@@ -10,10 +10,12 @@ import json
 import re
 import tempfile
 from datetime import datetime
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from dotenv import dotenv_values
 
 import lit_researcher.config as config
 from lit_researcher.config import FIELDS
@@ -131,6 +133,78 @@ def apply_model(api_key: str, base_url: str, model_name: str, api_type: str = ""
     if api_type:
         save_to_env("API_TYPE", api_type)
         config.API_TYPE = api_type
+
+
+IMPORTABLE_ENV_KEYS = {
+    "OPENAI_API_KEY": "OPENAI_API_KEY",
+    "OPENAI_BASE_URL": "OPENAI_BASE_URL",
+    "OPENAI_MODEL": "OPENAI_MODEL",
+    "API_TYPE": "API_TYPE",
+    "NOTION_TOKEN": "NOTION_TOKEN",
+    "NOTION_PARENT_PAGE_ID": "NOTION_PARENT_PAGE_ID",
+    "NOTION_DB_NAME": "NOTION_DB_NAME",
+    "UNPAYWALL_EMAIL": "UNPAYWALL_EMAIL",
+    "HTTP_PROXY": "HTTP_PROXY",
+    "HTTPS_PROXY": "HTTP_PROXY",
+    "IEEE_API_KEY": "IEEE_API_KEY",
+    "SCOPUS_API_KEY": "SCOPUS_API_KEY",
+    "MAX_RESULTS": "MAX_RESULTS",
+    "FETCH_CONCURRENCY": "FETCH_CONCURRENCY",
+    "LLM_CONCURRENCY": "LLM_CONCURRENCY",
+}
+
+
+def _set_runtime_config(key: str, value: str) -> None:
+    if key in {"MAX_RESULTS", "FETCH_CONCURRENCY", "LLM_CONCURRENCY"}:
+        setattr(config, key, int(value))
+        return
+    setattr(config, key, value)
+    if key == "HTTP_PROXY":
+        config.HTTP_PROXY = value
+
+
+def import_env_text(env_text: str) -> dict[str, list[str]]:
+    parsed = dotenv_values(stream=StringIO(env_text))
+
+    imported: list[str] = []
+    ignored: list[str] = []
+    warnings: list[str] = []
+
+    for raw_key, raw_value in parsed.items():
+        if not raw_key:
+            continue
+        key = raw_key.strip()
+        mapped_key = IMPORTABLE_ENV_KEYS.get(key)
+        if not mapped_key:
+            ignored.append(key)
+            continue
+        if raw_value is None:
+            warnings.append(f"{key} 缺少值，已跳过")
+            continue
+
+        value = str(raw_value).strip()
+        try:
+            if mapped_key == "API_TYPE" and value not in {"openai", "anthropic"}:
+                warnings.append(f"{key} 的值必须是 openai 或 anthropic，已跳过")
+                continue
+            if mapped_key in {"MAX_RESULTS", "FETCH_CONCURRENCY", "LLM_CONCURRENCY"}:
+                int(value)
+
+            save_to_env(mapped_key, value)
+            _set_runtime_config(mapped_key, value)
+            imported.append(mapped_key)
+        except ValueError:
+            warnings.append(f"{key} 需要是数字，已跳过")
+
+    # Normalize proxy envs so runtime and .env stay aligned.
+    if "HTTP_PROXY" in imported and "HTTPS_PROXY" not in parsed:
+        save_to_env("HTTPS_PROXY", config.HTTP_PROXY)
+
+    return {
+        "imported": sorted(set(imported)),
+        "ignored": sorted(set(ignored)),
+        "warnings": warnings,
+    }
 
 
 def test_model_connection(api_key: str, base_url: str, model_name: str, api_type: str = "openai") -> tuple[bool, str]:
