@@ -21,6 +21,30 @@ function Test-CommandExists {
     return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Test-PythonModule {
+    param(
+        [string]$PythonExe,
+        [string[]]$Modules
+    )
+
+    if (-not (Test-Path $PythonExe)) {
+        return $false
+    }
+
+    $quotedModules = ($Modules | ForEach-Object { "'$_'" }) -join ", "
+    $probe = @"
+import importlib.util
+import sys
+
+modules = [$quotedModules]
+missing = [name for name in modules if importlib.util.find_spec(name) is None]
+sys.exit(0 if not missing else 1)
+"@
+
+    & $PythonExe -c $probe | Out-Null
+    return $LASTEXITCODE -eq 0
+}
+
 function Ensure-BackendEnvironment {
     if (-not (Test-CommandExists "python")) {
         throw "Python is not installed or not in PATH."
@@ -37,12 +61,18 @@ function Ensure-BackendEnvironment {
     if ((Test-Path $BackendStamp) -and (Test-Path $RequirementsFile)) {
         $NeedInstall = (Get-Item $BackendStamp).LastWriteTimeUtc -lt (Get-Item $RequirementsFile).LastWriteTimeUtc
     }
+    if (-not $NeedInstall) {
+        $NeedInstall = -not (Test-PythonModule -PythonExe $VenvPython -Modules @("uvicorn", "fastapi", "pydantic"))
+    }
 
     if ($NeedInstall) {
         Write-Host ""
         Write-Host "[Bootstrap] Installing Python dependencies..." -ForegroundColor Yellow
         & $VenvPython -m pip install --upgrade pip
         & $VenvPython -m pip install -r $RequirementsFile
+        if (-not (Test-PythonModule -PythonExe $VenvPython -Modules @("uvicorn", "fastapi", "pydantic"))) {
+            throw "Python dependencies appear incomplete after installation. Missing required backend modules."
+        }
         Set-Content -Path $BackendStamp -Value (Get-Date).ToString("o") -Encoding ASCII
     }
 
