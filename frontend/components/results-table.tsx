@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { AgGridReact } from "ag-grid-react";
 import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type { ColDef, ICellRendererParams } from "ag-grid-community";
@@ -12,22 +12,22 @@ ModuleRegistry.registerModules([AllCommunityModule]);
 
 const QUALITY_COLORS: Record<string, string> = {
   high_value: "text-emerald-400",
-  medium_value: "text-yellow-400",
-  low_value: "text-red-400",
+  medium_value: "text-amber-300",
+  low_value: "text-rose-400",
 };
 
 const REVIEW_COLORS: Record<string, string> = {
   ok: "text-emerald-400",
-  suspicious: "text-yellow-400",
-  low_quality: "text-red-400",
+  suspicious: "text-amber-300",
+  low_quality: "text-rose-400",
 };
 
 function QualityPercentRenderer(params: ICellRendererParams) {
   const val = Number(params.value);
-  if (isNaN(val)) return <span className="text-zinc-600">—</span>;
+  if (Number.isNaN(val)) return <span className="text-zinc-600">--</span>;
   const pct = Math.round(val * 100);
-  const color = pct >= 70 ? "text-emerald-400" : pct >= 40 ? "text-yellow-400" : "text-red-400";
-  return <span className={color}>{pct}%</span>;
+  const color = pct >= 70 ? "text-emerald-400" : pct >= 40 ? "text-amber-300" : "text-rose-400";
+  return <span className={`font-medium ${color}`}>{pct}%</span>;
 }
 
 function QualityLabelRenderer(params: ICellRendererParams) {
@@ -44,56 +44,36 @@ function QualityLabelRenderer(params: ICellRendererParams) {
 function ReviewRenderer(params: ICellRendererParams) {
   const val = String(params.value ?? "");
   const color = REVIEW_COLORS[val] ?? "text-zinc-500";
-  return <span className={color}>{val}</span>;
+  const display: Record<string, string> = {
+    ok: "通过",
+    suspicious: "待复核",
+    low_quality: "低质量",
+  };
+  return <span className={`text-xs font-medium ${color}`}>{display[val] ?? val}</span>;
 }
 
 function PushedRenderer(params: ICellRendererParams) {
-  if (!params.value) return <span className="text-zinc-600">—</span>;
-  return <span className="text-emerald-400 text-xs">✓ 已推送</span>;
+  if (!params.value) return <span className="text-zinc-600">--</span>;
+  return <span className="text-xs font-medium text-emerald-400">已推送</span>;
 }
 
 function SkipReasonRenderer(params: ICellRendererParams) {
   const val = String(params.value ?? "");
-  if (!val) return <span className="text-zinc-600">—</span>;
+  if (!val) return <span className="text-zinc-600">--</span>;
   return (
-    <span className="text-red-400 text-xs" title={val}>
-      {val.length > 30 ? val.slice(0, 30) + "…" : val}
+    <span className="text-xs text-rose-300" title={val}>
+      {val.length > 30 ? `${val.slice(0, 30)}...` : val}
     </span>
   );
 }
 
 const META_COLUMNS: ColDef[] = [
-  {
-    field: "_data_quality",
-    headerName: "数据质量",
-    width: 100,
-    cellRenderer: QualityPercentRenderer,
-  },
-  {
-    field: "_quality_label",
-    headerName: "质量等级",
-    width: 90,
-    cellRenderer: QualityLabelRenderer,
-  },
-  {
-    field: "_review",
-    headerName: "审查",
-    width: 100,
-    cellRenderer: ReviewRenderer,
-  },
+  { field: "_data_quality", headerName: "数据质量", width: 108, cellRenderer: QualityPercentRenderer },
+  { field: "_quality_label", headerName: "质量等级", width: 96, cellRenderer: QualityLabelRenderer },
+  { field: "_review", headerName: "复核状态", width: 104, cellRenderer: ReviewRenderer },
   { field: "text_source", headerName: "文本来源", width: 110 },
-  {
-    field: "_skip_reason",
-    headerName: "失败原因",
-    width: 160,
-    cellRenderer: SkipReasonRenderer,
-  },
-  {
-    field: "_pushed_to_notion",
-    headerName: "Notion",
-    width: 90,
-    cellRenderer: PushedRenderer,
-  },
+  { field: "_skip_reason", headerName: "失败原因", width: 180, cellRenderer: SkipReasonRenderer },
+  { field: "_pushed_to_notion", headerName: "Notion", width: 92, cellRenderer: PushedRenderer },
 ];
 
 interface ResultsTableProps {
@@ -110,7 +90,7 @@ export function ResultsTable({ rows, onRowClick }: ResultsTableProps) {
     if (showAll) return rows;
     return rows.filter((r) => {
       const q = Number(r._data_quality);
-      return !isNaN(q) && q > 0;
+      return !Number.isNaN(q) && q > 0;
     });
   }, [rows, showAll]);
 
@@ -122,7 +102,7 @@ export function ResultsTable({ rows, onRowClick }: ResultsTableProps) {
       return Object.keys(rows[0]).map((key) => ({
         field: key,
         headerName: key,
-        minWidth: 120,
+        minWidth: 140,
         resizable: true,
         sortable: true,
         filter: true,
@@ -132,7 +112,7 @@ export function ResultsTable({ rows, onRowClick }: ResultsTableProps) {
     const fieldCols: ColDef[] = meta.fields.map((f) => ({
       field: f,
       headerName: meta.field_labels[f] ?? f,
-      minWidth: 120,
+      minWidth: 130,
       flex: f === "source_title" ? 2 : undefined,
       resizable: true,
       sortable: true,
@@ -151,12 +131,8 @@ export function ResultsTable({ rows, onRowClick }: ResultsTableProps) {
 
   const stats = useMemo(() => {
     if (filteredRows.length === 0) return null;
-    const qualities = filteredRows
-      .map((r) => Number(r._data_quality))
-      .filter((v) => !isNaN(v));
-    const avgQ = qualities.length
-      ? qualities.reduce((a, b) => a + b, 0) / qualities.length
-      : 0;
+    const qualities = filteredRows.map((r) => Number(r._data_quality)).filter((v) => !Number.isNaN(v));
+    const avgQ = qualities.length ? qualities.reduce((a, b) => a + b, 0) / qualities.length : 0;
     const ftCount = filteredRows.filter(
       (r) => r.text_source && r.text_source !== "none" && r.text_source !== "abstract",
     ).length;
@@ -171,7 +147,7 @@ export function ResultsTable({ rows, onRowClick }: ResultsTableProps) {
 
   if (rows.length === 0) {
     return (
-      <div className="flex h-48 items-center justify-center text-sm text-zinc-500">
+      <div className="panel flex h-48 items-center justify-center p-6 text-sm text-zinc-500">
         暂无数据
       </div>
     );
@@ -182,45 +158,45 @@ export function ResultsTable({ rows, onRowClick }: ResultsTableProps) {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
+      className="data-grid-shell"
     >
-      <div className="mb-3 flex items-center justify-between">
-        {stats && (
-          <div className="flex items-center gap-6 text-xs text-zinc-400">
-            <span>
-              共 <span className="font-medium text-zinc-200">{stats.total}</span> 条
-            </span>
-            <span>
-              平均质量{" "}
-              <span
-                className={`font-medium ${
-                  stats.avgQuality >= 70
-                    ? "text-emerald-400"
-                    : stats.avgQuality >= 40
-                      ? "text-yellow-400"
-                      : "text-red-400"
-                }`}
-              >
-                {stats.avgQuality}%
+      <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="page-kicker">Result Matrix</p>
+          <h3 className="mt-2 text-lg font-semibold tracking-tight text-white">结构化结果表</h3>
+          {stats ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-white/8 bg-white/[0.035] px-3 py-2 text-xs text-zinc-400">
+                总计 <span className="ml-2 font-semibold text-zinc-100">{stats.total}</span>
               </span>
-            </span>
-            <span>
-              全文获取率{" "}
-              <span className="font-medium text-zinc-200">{stats.fulltextRate}%</span>
-            </span>
-            {stats.failedCount > 0 && (
-              <span>
-                失败{" "}
-                <span className="font-medium text-red-400">{stats.failedCount}</span> 条
+              <span className="rounded-full border border-white/8 bg-white/[0.035] px-3 py-2 text-xs text-zinc-400">
+                平均质量
+                <span
+                  className={`ml-2 font-semibold ${
+                    stats.avgQuality >= 70
+                      ? "text-emerald-400"
+                      : stats.avgQuality >= 40
+                        ? "text-amber-300"
+                        : "text-rose-400"
+                  }`}
+                >
+                  {stats.avgQuality}%
+                </span>
               </span>
-            )}
-          </div>
-        )}
-        <div className="flex items-center gap-2">
-          <Switch
-            size="sm"
-            checked={showAll}
-            onCheckedChange={setShowAll}
-          />
+              <span className="rounded-full border border-white/8 bg-white/[0.035] px-3 py-2 text-xs text-zinc-400">
+                全文命中 <span className="ml-2 font-semibold text-zinc-100">{stats.fulltextRate}%</span>
+              </span>
+              {stats.failedCount > 0 ? (
+                <span className="rounded-full border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                  失败 {stats.failedCount} 条
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex items-center gap-3 self-start lg:self-center">
+          <Switch size="sm" checked={showAll} onCheckedChange={setShowAll} />
           <AnimatePresence mode="wait">
             <motion.span
               key={showAll ? "all" : "filtered"}
@@ -231,14 +207,15 @@ export function ResultsTable({ rows, onRowClick }: ResultsTableProps) {
             >
               {showAll
                 ? `显示全部 ${rows.length} 条`
-                : `显示 ${filteredRows.length}/${rows.length} 条（隐藏 ${hiddenCount} 条无效数据）`}
+                : `显示 ${filteredRows.length}/${rows.length} 条，隐藏 ${hiddenCount} 条低质量记录`}
             </motion.span>
           </AnimatePresence>
         </div>
       </div>
+
       <div
         className="ag-theme-alpine-dark w-full"
-        style={{ height: `min(calc(100vh - 400px), ${Math.min(filteredRows.length * 42 + 56, 600)}px)` }}
+        style={{ height: `min(calc(100vh - 380px), ${Math.min(filteredRows.length * 42 + 56, 620)}px)` }}
       >
         <AgGridReact
           ref={gridRef}

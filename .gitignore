@@ -6,6 +6,8 @@ output/
 __pycache__/
 .pytest_cache/
 .cursor/
+.codex/
+.playwright-cli/
 *.pyc
 *.pyo
 *.pyd

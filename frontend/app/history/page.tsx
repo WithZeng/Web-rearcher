@@ -3,15 +3,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Search,
   ChevronDown,
   ChevronRight,
-  Trash2,
-  Merge,
-  Sparkles,
-  Loader2,
-  Upload,
   FlaskConical,
+  Loader2,
+  Merge,
+  Search,
+  Sparkles,
+  Trash2,
+  Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,10 +21,10 @@ import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import { ResultsTable } from "@/components/results-table";
 import { ExportMenu } from "@/components/export-menu";
@@ -33,7 +33,7 @@ import { api, type HistoryTask, type NotionPushProgress, type PubchemProgress } 
 
 function formatTimestamp(ts: string): string {
   const d = new Date(ts);
-  if (isNaN(d.getTime())) return ts;
+  if (Number.isNaN(d.getTime())) return ts;
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
@@ -175,7 +175,7 @@ export default function HistoryPage() {
     setPubchemProgress(null);
     try {
       const result = await api.history.enrichPubchem(pubchemForce, (progress) => {
-        if (progress.phase !== 'heartbeat') {
+        if (progress.phase !== "heartbeat") {
           setPubchemProgress(progress);
         }
       });
@@ -199,9 +199,11 @@ export default function HistoryPage() {
     setNotionResult(null);
     setNotionProgress(null);
     try {
-      const result = await api.notion.pushStream(mergedRows, (progress) => {
-        setNotionProgress(progress);
-      }, notionPatchExisting);
+      const result = await api.notion.pushStream(
+        mergedRows,
+        (progress) => setNotionProgress(progress),
+        notionPatchExisting,
+      );
       setNotionResult(result);
       if (result.pushed > 0 || result.patched > 0) {
         await loadMerged(pushedTab);
@@ -212,249 +214,266 @@ export default function HistoryPage() {
       setNotionBusy(false);
       setNotionProgress(null);
     }
-  }, [mergedRows, loadMerged, pushedTab, notionPatchExisting]);
+  }, [mergedRows, loadMerged, notionPatchExisting, pushedTab]);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8 px-6 py-10">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight text-zinc-100">
-          历史记录
-        </h1>
-      </div>
+    <div className="app-page space-y-6">
+      <section className="page-hero">
+        <div className="grid gap-8 lg:grid-cols-[1.15fr_0.85fr]">
+          <div>
+            <p className="page-kicker">历史记录</p>
+            <h1 className="mt-4 text-3xl font-semibold tracking-tight text-white md:text-5xl">
+              查看历史任务，并继续处理已有结果。
+            </h1>
+            <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-300 md:text-base">
+              支持合并去重、清理无效数据、PubChem 补全和推送 Notion。
+            </p>
+          </div>
 
-      {/* Controls */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-zinc-500" />
-          <Input
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="搜索历史查询..."
-            className="pl-8"
-          />
+          <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
+            {[
+              { label: "历史任务", value: String(tasks.length), hint: "累计记录" },
+              { label: "当前筛选", value: filter.trim() ? "已启用" : "全部", hint: filter || "无关键词" },
+              { label: "合并结果", value: mergedRows ? String(mergedRows.length) : "--", hint: "当前视图" },
+            ].map((item) => (
+              <div key={item.label} className="rounded-[24px] border border-white/10 bg-black/20 p-5">
+                <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">{item.label}</p>
+                <p className="mt-3 text-3xl font-semibold tracking-tight text-white">{item.value}</p>
+                <p className="mt-2 text-sm text-zinc-500">{item.hint}</p>
+              </div>
+            ))}
+          </div>
         </div>
-        <Button variant="outline" onClick={handleMerge}>
-          <Merge className="size-3.5" data-icon="inline-start" />
-          合并去重
-        </Button>
-        <Button
-          variant="outline"
-          disabled={pubchemBusy}
-          onClick={() => { setPubchemResult(null); setPubchemDialog(true); }}
-        >
-          {pubchemBusy ? (
-            <Loader2 className="size-3.5 animate-spin" data-icon="inline-start" />
-          ) : (
-            <FlaskConical className="size-3.5" data-icon="inline-start" />
-          )}
-          PubChem 补全
-        </Button>
-        <Button
-          variant="outline"
-          className="border-red-900/50 text-red-400 hover:bg-red-950/30 hover:text-red-300"
-          onClick={() => { setCleanupResult(null); setCleanupDialog(true); }}
-        >
-          <Sparkles className="size-3.5" data-icon="inline-start" />
-          清理无效数据
-        </Button>
-      </div>
+      </section>
 
-      {/* Merged results */}
+      <section className="panel p-5 md:p-6">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="relative max-w-xl flex-1">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
+            <Input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="搜索历史查询..."
+              className="h-12 rounded-full border-white/10 bg-black/20 pl-10 text-zinc-100 placeholder:text-zinc-600"
+            />
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={handleMerge}>
+              <Merge className="size-3.5" data-icon="inline-start" />
+              合并去重
+            </Button>
+            <Button
+              variant="outline"
+              disabled={pubchemBusy}
+              onClick={() => {
+                setPubchemResult(null);
+                setPubchemDialog(true);
+              }}
+            >
+              {pubchemBusy ? (
+                <Loader2 className="size-3.5 animate-spin" data-icon="inline-start" />
+              ) : (
+                <FlaskConical className="size-3.5" data-icon="inline-start" />
+              )}
+              PubChem 补全
+            </Button>
+            <Button
+              variant="outline"
+              className="border-red-500/20 text-red-300 hover:bg-red-500/10 hover:text-red-200"
+              onClick={() => {
+                setCleanupResult(null);
+                setCleanupDialog(true);
+              }}
+            >
+              <Sparkles className="size-3.5" data-icon="inline-start" />
+              清理无效数据
+            </Button>
+          </div>
+        </div>
+      </section>
+
       <AnimatePresence>
-        {mergedRows && (
-          <motion.div
+        {mergedRows ? (
+          <motion.section
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            className="space-y-3 overflow-hidden"
+            className="space-y-4 overflow-hidden"
           >
-            {/* Header row */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <span className="text-sm font-medium text-zinc-200">
-                  合并结果：{mergedRows.length} 条
-                  {mergeStats && mergeStats.dedupDiscarded > 0 && (
-                    <span className="ml-2 text-xs font-normal text-zinc-500">
-                      （去重丢弃 {mergeStats.dedupDiscarded} 条不完整记录）
-                    </span>
-                  )}
-                </span>
-                {mergeStats && (
-                  <span className="text-xs text-zinc-500">
-                    已推送 {mergeStats.pushedCount} / 未推送 {mergeStats.unpushedCount}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={pubchemBusy}
-                  onClick={() => { setPubchemResult(null); setPubchemDialog(true); }}
-                >
-                  {pubchemBusy ? (
-                    <Loader2 className="size-3.5 animate-spin" data-icon="inline-start" />
-                  ) : (
-                    <FlaskConical className="size-3.5" data-icon="inline-start" />
-                  )}
-                  PubChem 补全
-                </Button>
-                {mergedRows.length > 0 && (
+            <div className="panel p-5 md:p-6">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div>
+                  <p className="page-kicker">合并结果</p>
+                  <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white">去重后的数据</h2>
+                  <p className="mt-2 text-sm leading-6 text-zinc-400">
+                    当前共 {mergedRows.length} 条记录
+                    {mergeStats?.dedupDiscarded ? `，去重时额外丢弃 ${mergeStats.dedupDiscarded} 条不完整记录。` : "。"}
+                  </p>
+                  {mergeStats ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-2 text-xs text-zinc-400">
+                        已推送 <span className="ml-1 font-semibold text-zinc-100">{mergeStats.pushedCount}</span>
+                      </span>
+                      <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-2 text-xs text-zinc-400">
+                        未推送 <span className="ml-1 font-semibold text-zinc-100">{mergeStats.unpushedCount}</span>
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={notionBusy}
+                    disabled={pubchemBusy}
                     onClick={() => {
-                      setNotionResult(null);
-                      setNotionError(null);
-                      setNotionDialog(true);
+                      setPubchemResult(null);
+                      setPubchemDialog(true);
                     }}
                   >
-                    {notionBusy ? (
+                    {pubchemBusy ? (
                       <Loader2 className="size-3.5 animate-spin" data-icon="inline-start" />
                     ) : (
-                      <Upload className="size-3.5" data-icon="inline-start" />
+                      <FlaskConical className="size-3.5" data-icon="inline-start" />
                     )}
-                    推送到 Notion
+                    PubChem 补全
                   </Button>
-                )}
-                <ExportMenu rows={mergedRows} />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { setMergedRows(null); setMergeStats(null); }}
-                >
-                  关闭
-                </Button>
+                  {mergedRows.length > 0 ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={notionBusy}
+                      onClick={() => {
+                        setNotionResult(null);
+                        setNotionError(null);
+                        setNotionDialog(true);
+                      }}
+                    >
+                      {notionBusy ? (
+                        <Loader2 className="size-3.5 animate-spin" data-icon="inline-start" />
+                      ) : (
+                        <Upload className="size-3.5" data-icon="inline-start" />
+                      )}
+                      推送到 Notion
+                    </Button>
+                  ) : null}
+                  <ExportMenu rows={mergedRows} />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setMergedRows(null);
+                      setMergeStats(null);
+                    }}
+                  >
+                    关闭
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-5 flex w-fit items-center gap-1 rounded-full border border-white/8 bg-white/[0.03] p-1">
+                {[
+                  { key: "unpushed" as const, label: "未推送", count: mergeStats?.unpushedCount },
+                  { key: "pushed" as const, label: "已推送", count: mergeStats?.pushedCount },
+                  { key: "all" as const, label: "全部", count: mergeStats?.totalBefore },
+                ].map(({ key, label, count }) => (
+                  <button
+                    key={key}
+                    onClick={() => handleTabChange(key)}
+                    className={`rounded-full px-4 py-2 text-xs font-medium transition ${
+                      pushedTab === key
+                        ? "bg-cyan-400/10 text-cyan-100"
+                        : "text-zinc-500 hover:text-zinc-300"
+                    }`}
+                  >
+                    {label}
+                    {count != null ? <span className="ml-1.5 text-zinc-500">{count}</span> : null}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Pushed/Unpushed tabs */}
-            <div className="flex items-center gap-1 rounded-lg bg-zinc-900/60 p-0.5 w-fit">
-              {([
-                { key: "unpushed" as const, label: "未推送", count: mergeStats?.unpushedCount },
-                { key: "pushed" as const, label: "已推送", count: mergeStats?.pushedCount },
-                { key: "all" as const, label: "全部", count: mergeStats?.totalBefore },
-              ]).map(({ key, label, count }) => (
-                <button
-                  key={key}
-                  onClick={() => handleTabChange(key)}
-                  className={`relative rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                    pushedTab === key
-                      ? "bg-zinc-800 text-zinc-100 shadow-sm"
-                      : "text-zinc-500 hover:text-zinc-300"
-                  }`}
-                >
-                  {label}
-                  {count != null && (
-                    <span className={`ml-1.5 ${
-                      pushedTab === key ? "text-zinc-400" : "text-zinc-600"
-                    }`}>
-                      {count}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-
-            <ResultsTable
-              rows={mergedRows}
-              onRowClick={(row) => setSelectedPaper(row)}
-            />
-            <Separator />
-          </motion.div>
-        )}
+            <ResultsTable rows={mergedRows} onRowClick={(row) => setSelectedPaper(row)} />
+            <Separator className="bg-white/8" />
+          </motion.section>
+        ) : null}
       </AnimatePresence>
 
-      {/* Task list */}
       {loading ? (
-        <p className="text-sm text-zinc-500">加载中...</p>
+        <div className="panel flex h-56 items-center justify-center text-sm text-zinc-500">加载中...</div>
       ) : filtered.length === 0 ? (
-        <p className="text-sm text-zinc-500">暂无历史记录</p>
+        <div className="panel flex h-56 items-center justify-center text-sm text-zinc-500">暂无历史记录</div>
       ) : (
-        <div className="space-y-1">
-          {filtered.map((task) => {
-            const expanded = expandedTs.has(task.timestamp);
-            return (
-              <div key={task.timestamp}>
-                {/* Task header */}
-                <button
-                  onClick={() => toggleExpand(task.timestamp)}
-                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
-                >
-                  {expanded ? (
-                    <ChevronDown className="size-3.5 shrink-0 text-zinc-500" />
-                  ) : (
-                    <ChevronRight className="size-3.5 shrink-0 text-zinc-500" />
-                  )}
-                  <span className="shrink-0 font-mono text-xs text-zinc-600">
-                    {formatTimestamp(task.timestamp)}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-zinc-300">
-                    {task.query}
-                  </span>
-                  {task.search_metadata?.databases && task.search_metadata.databases.length > 0 && (
-                    <span className="hidden shrink-0 text-[10px] text-zinc-600 sm:inline">
-                      {task.search_metadata.databases.join(", ")}
-                    </span>
-                  )}
-                  <Badge variant="secondary" className="shrink-0">
-                    {task.count} 篇
-                  </Badge>
-                </button>
+        <section className="panel p-3 md:p-4">
+          <div className="space-y-2">
+            {filtered.map((task) => {
+              const expanded = expandedTs.has(task.timestamp);
+              return (
+                <div key={task.timestamp} className="rounded-[24px] border border-white/8 bg-white/[0.02]">
+                  <button
+                    onClick={() => toggleExpand(task.timestamp)}
+                    className="flex w-full items-center gap-3 px-4 py-4 text-left transition hover:bg-white/[0.02]"
+                  >
+                    {expanded ? (
+                      <ChevronDown className="size-4 shrink-0 text-zinc-500" />
+                    ) : (
+                      <ChevronRight className="size-4 shrink-0 text-zinc-500" />
+                    )}
+                    <span className="shrink-0 font-mono text-xs text-zinc-600">{formatTimestamp(task.timestamp)}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm text-zinc-200">{task.query}</span>
+                    {task.search_metadata?.databases && task.search_metadata.databases.length > 0 ? (
+                      <span className="hidden shrink-0 text-[10px] text-zinc-600 sm:inline">
+                        {task.search_metadata.databases.join(", ")}
+                      </span>
+                    ) : null}
+                    <Badge variant="secondary" className="shrink-0">
+                      {task.count} 篇
+                    </Badge>
+                  </button>
 
-                {/* Expanded content */}
-                <AnimatePresence>
-                  {expanded && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="space-y-3 px-3 pb-4 pt-1">
-                        <div className="flex items-center justify-end gap-2">
-                          <ExportMenu rows={task.rows} />
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteTarget(task.timestamp);
-                            }}
-                          >
-                            <Trash2
-                              className="size-3.5"
-                              data-icon="inline-start"
-                            />
-                            删除
-                          </Button>
+                  <AnimatePresence>
+                    {expanded ? (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="space-y-3 px-4 pb-4 pt-1">
+                          <div className="flex items-center justify-end gap-2">
+                            <ExportMenu rows={task.rows} />
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteTarget(task.timestamp);
+                              }}
+                            >
+                              <Trash2 className="size-3.5" data-icon="inline-start" />
+                              删除
+                            </Button>
+                          </div>
+                          <ResultsTable rows={task.rows} onRowClick={(row) => setSelectedPaper(row)} />
                         </div>
-                        <ResultsTable
-                          rows={task.rows}
-                          onRowClick={(row) => setSelectedPaper(row)}
-                        />
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            );
-          })}
-        </div>
+                      </motion.div>
+                    ) : null}
+                  </AnimatePresence>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       )}
 
-      {/* Delete confirmation dialog */}
-      <Dialog
-        open={!!deleteTarget}
-        onOpenChange={(o) => !o && setDeleteTarget(null)}
-      >
-        <DialogContent>
+      <Dialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <DialogContent className="border-white/10 bg-[linear-gradient(180deg,rgba(9,12,20,0.98),rgba(8,10,16,0.96))]">
           <DialogHeader>
-            <DialogTitle>确认删除？</DialogTitle>
-            <DialogDescription>
-              此操作将永久删除该条历史记录，无法恢复。
+            <DialogTitle className="text-white">确认删除</DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              此操作会永久删除这条历史记录，无法恢复。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -468,102 +487,93 @@ export default function HistoryPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Cleanup confirmation dialog */}
       <Dialog open={cleanupDialog} onOpenChange={(o) => !o && setCleanupDialog(false)}>
-        <DialogContent>
+        <DialogContent className="border-white/10 bg-[linear-gradient(180deg,rgba(9,12,20,0.98),rgba(8,10,16,0.96))]">
           <DialogHeader>
-            <DialogTitle>清理无效数据</DialogTitle>
-            <DialogDescription>
-              将从所有历史记录中<strong>永久删除</strong>以下数据：
+            <DialogTitle className="text-white">清理无效数据</DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              将从所有历史记录中永久移除低质量和关键字段缺失的数据。
             </DialogDescription>
           </DialogHeader>
-          <ul className="space-y-1 text-sm text-zinc-400 pl-4 list-disc">
-            <li>数据质量 &lt; 15% 的记录（少于 3 个字段有数据）</li>
-            <li>缺少药物名称（drug_name）的记录</li>
+          <ul className="list-disc space-y-1 pl-4 text-sm text-zinc-400">
+            <li>数据质量低于 15% 的记录</li>
+            <li>缺少药物名称 `drug_name` 的记录</li>
             <li>核心字段不足 2 个的记录</li>
-            <li>清理后的空文件将被自动删除</li>
+            <li>清理后为空的文件会被自动删除</li>
           </ul>
-          {cleanupResult && (
+          {cleanupResult ? (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 text-sm"
+              className="rounded-[20px] border border-white/8 bg-white/[0.03] p-3 text-sm"
             >
               {cleanupResult.removed > 0 ? (
                 <span className="text-emerald-400">
-                  已清理 {cleanupResult.removed} 条无效数据，剩余 {cleanupResult.rows_after} 条
+                  已清理 {cleanupResult.removed} 条无效数据，剩余 {cleanupResult.rows_after} 条。
                 </span>
               ) : (
-                <span className="text-zinc-400">没有需要清理的无效数据</span>
+                <span className="text-zinc-400">没有需要清理的无效数据。</span>
               )}
             </motion.div>
-          )}
+          ) : null}
           <DialogFooter>
             <Button variant="outline" onClick={() => setCleanupDialog(false)}>
               {cleanupResult ? "关闭" : "取消"}
             </Button>
-            {!cleanupResult && (
-              <Button
-                variant="destructive"
-                onClick={handleCleanup}
-                disabled={cleanupBusy}
-              >
-                {cleanupBusy && <Loader2 className="size-3.5 animate-spin" data-icon="inline-start" />}
+            {!cleanupResult ? (
+              <Button variant="destructive" onClick={handleCleanup} disabled={cleanupBusy}>
+                {cleanupBusy ? <Loader2 className="size-3.5 animate-spin" data-icon="inline-start" /> : null}
                 确认清理
               </Button>
-            )}
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Notion push dialog */}
       <Dialog open={notionDialog} onOpenChange={(o) => { if (!o && !notionBusy) setNotionDialog(false); }}>
-        <DialogContent>
+        <DialogContent className="border-white/10 bg-[linear-gradient(180deg,rgba(9,12,20,0.98),rgba(8,10,16,0.96))]">
           <DialogHeader>
-            <DialogTitle>推送到 Notion</DialogTitle>
-            <DialogDescription>
-              将合并后的 {mergedRows?.length ?? 0} 条数据推送到 Notion 数据库。
+            <DialogTitle className="text-white">推送到 Notion</DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              将合并后的 {mergedRows?.length ?? 0} 条记录写入 Notion 数据库。
             </DialogDescription>
           </DialogHeader>
 
-          {!notionBusy && !notionResult && !notionError && (
+          {!notionBusy && !notionResult && !notionError ? (
             <div className="space-y-4">
-              <ul className="space-y-1 text-sm text-zinc-400 pl-4 list-disc">
-                <li>自动查询 Notion 已有 DOI，跳过重复文献</li>
-                <li>数据质量 &ge; 15%（至少 3 个字段有数据）</li>
-                <li>必须包含药物名称（drug_name）</li>
+              <ul className="list-disc space-y-1 pl-4 text-sm text-zinc-400">
+                <li>自动检查已有 DOI，跳过重复文献</li>
+                <li>数据质量必须大于等于 15%</li>
+                <li>必须包含药物名称 `drug_name`</li>
                 <li>至少 2 个核心字段有值</li>
               </ul>
-              <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3">
+              <div className="flex items-center justify-between rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
                 <div className="space-y-0.5">
-                  <p className="text-sm font-medium text-zinc-200">检查未补全数据</p>
+                  <p className="text-sm font-medium text-zinc-200">补全已存在的数据</p>
                   <p className="text-xs text-zinc-500">
-                    对重复文献，比较本地与 Notion 数据，自动补全数据库中的空字段
+                    对重复文献比较本地和 Notion 数据，自动补齐空字段。
                   </p>
                 </div>
                 <Switch checked={notionPatchExisting} onCheckedChange={setNotionPatchExisting} />
               </div>
             </div>
-          )}
+          ) : null}
 
-          {/* Live progress */}
-          {notionBusy && (
+          {notionBusy ? (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4"
+              className="space-y-3 rounded-[20px] border border-white/8 bg-white/[0.03] p-4"
             >
-              <div className="flex items-center gap-2 text-sm text-blue-400">
+              <div className="flex items-center gap-2 text-sm text-cyan-300">
                 <Loader2 className="size-3.5 animate-spin" />
-                <span className="truncate">
-                  {notionProgress?.message || "正在准备推送..."}
-                </span>
+                <span className="truncate">{notionProgress?.message || "正在准备推送..."}</span>
               </div>
-              {(notionProgress?.phase === "pushing" || notionProgress?.phase === "patching") && (notionProgress.total ?? 0) > 0 && (
+              {(notionProgress?.phase === "pushing" || notionProgress?.phase === "patching") && (notionProgress.total ?? 0) > 0 ? (
                 <>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/8">
                     <motion.div
-                      className={`h-full rounded-full ${notionProgress.phase === "patching" ? "bg-amber-500" : "bg-blue-500"}`}
+                      className={`h-full rounded-full ${notionProgress.phase === "patching" ? "bg-amber-400" : "bg-cyan-400"}`}
                       initial={{ width: 0 }}
                       animate={{ width: `${Math.round(((notionProgress.current ?? 0) / (notionProgress.total ?? 1)) * 100)}%` }}
                       transition={{ duration: 0.3 }}
@@ -572,194 +582,170 @@ export default function HistoryPage() {
                   <div className="flex items-center justify-between text-xs text-zinc-500">
                     <span>{notionProgress.current}/{notionProgress.total}</span>
                     <span className="text-emerald-400">{notionProgress.pushed ?? 0} 写入</span>
-                    {(notionProgress.patched ?? 0) > 0 && (
-                      <span className="text-amber-400">{notionProgress.patched} 补全</span>
-                    )}
-                    {(notionProgress.failed ?? 0) > 0 && (
-                      <span className="text-red-400">{notionProgress.failed} 失败</span>
-                    )}
+                    {(notionProgress.patched ?? 0) > 0 ? <span className="text-amber-300">{notionProgress.patched} 补全</span> : null}
+                    {(notionProgress.failed ?? 0) > 0 ? <span className="text-red-400">{notionProgress.failed} 失败</span> : null}
                   </div>
                 </>
-              )}
-              {notionProgress?.phase === "filter_done" && (
-                <div className="flex items-center gap-4 text-xs text-zinc-500">
-                  <span>待推送 <span className="text-zinc-300">{notionProgress.to_push}</span></span>
-                  {(notionProgress.to_patch ?? 0) > 0 && (
-                    <span>待补全 <span className="text-amber-400">{notionProgress.to_patch}</span></span>
-                  )}
-                  <span>质量过滤 <span className="text-zinc-300">{notionProgress.skipped_quality}</span></span>
-                  <span>重复跳过 <span className="text-zinc-300">{notionProgress.skipped_duplicate}</span></span>
-                </div>
-              )}
+              ) : null}
             </motion.div>
-          )}
+          ) : null}
 
-          {notionResult && (
+          {notionResult ? (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 text-sm"
+              className="space-y-2 rounded-[20px] border border-white/8 bg-white/[0.03] p-4 text-sm"
             >
               <div className="flex items-center gap-2 text-emerald-400">
                 <Upload className="size-4" />
                 <span className="font-medium">推送完成</span>
               </div>
               <div className="grid grid-cols-2 gap-2 text-zinc-300">
-                <span>成功写入：</span>
+                <span>成功写入</span>
                 <span className="font-medium text-emerald-400">{notionResult.pushed} 条</span>
-                {(notionResult.patched ?? 0) > 0 && (
+                {(notionResult.patched ?? 0) > 0 ? (
                   <>
-                    <span>数据补全：</span>
-                    <span className="font-medium text-amber-400">{notionResult.patched} 条</span>
+                    <span>数据补全</span>
+                    <span className="font-medium text-amber-300">{notionResult.patched} 条</span>
                   </>
-                )}
-                <span>跳过重复：</span>
-                <span className="font-medium text-yellow-400">{notionResult.skipped_duplicate} 条</span>
-                <span>质量过滤：</span>
+                ) : null}
+                <span>跳过重复</span>
+                <span className="font-medium text-yellow-300">{notionResult.skipped_duplicate} 条</span>
+                <span>质量过滤</span>
                 <span className="font-medium text-zinc-500">{notionResult.skipped_quality} 条</span>
-                <span>总计：</span>
+                <span>总计</span>
                 <span className="font-medium">{notionResult.total} 条</span>
               </div>
             </motion.div>
-          )}
+          ) : null}
 
-          {notionError && (
+          {notionError ? (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="rounded-lg border border-red-900/50 bg-red-950/20 p-3 text-sm text-red-400"
+              className="rounded-[20px] border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-300"
             >
               推送失败：{notionError}
             </motion.div>
-          )}
+          ) : null}
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setNotionDialog(false)} disabled={notionBusy}>
               {notionResult ? "关闭" : "取消"}
             </Button>
-            {!notionResult && !notionBusy && (
+            {!notionResult && !notionBusy ? (
               <Button onClick={handleNotionPush} disabled={notionBusy}>
                 确认推送
               </Button>
-            )}
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* PubChem enrichment dialog */}
       <Dialog open={pubchemDialog} onOpenChange={(o) => { if (!o && !pubchemBusy) setPubchemDialog(false); }}>
-        <DialogContent>
+        <DialogContent className="border-white/10 bg-[linear-gradient(180deg,rgba(9,12,20,0.98),rgba(8,10,16,0.96))]">
           <DialogHeader>
-            <DialogTitle>PubChem 药物性质补全</DialogTitle>
-            <DialogDescription>
-              根据已提取的药物名称，从 PubChem 数据库自动补全药物化学性质（TPSA、HBD、HBA、LogP、分子量等）。
+            <DialogTitle className="text-white">PubChem 药物性质补全</DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              根据已提取的药物名称，从 PubChem 数据库补充理化性质字段。
             </DialogDescription>
           </DialogHeader>
 
-          {!pubchemBusy && !pubchemResult && (
+          {!pubchemBusy && !pubchemResult ? (
             <div className="space-y-4">
-              <ul className="space-y-1 text-sm text-zinc-400 pl-4 list-disc">
-                <li>自动拆分复合药物名（如 &quot;A; B&quot;）分别查询</li>
-                <li>限流并发请求，避免 PubChem API 限速失败</li>
-                <li>自动重试失败请求（最多 3 次）</li>
-                <li>补全后的数据标记来源为 &quot;pubchem&quot;</li>
+              <ul className="list-disc space-y-1 pl-4 text-sm text-zinc-400">
+                <li>自动拆分复合药物名称并逐个检索</li>
+                <li>并发请求会限流，避免 PubChem API 失败</li>
+                <li>失败请求会自动重试，最多 3 次</li>
+                <li>补全后的字段会标记来源为 `pubchem`</li>
               </ul>
-              <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3">
+              <div className="flex items-center justify-between rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
                 <div className="space-y-0.5">
                   <p className="text-sm font-medium text-zinc-200">覆盖已有数据</p>
                   <p className="text-xs text-zinc-500">
-                    开启后用 PubChem 权威数据替换 LLM 提取值
+                    开启后会用 PubChem 的权威值覆盖当前提取结果。
                   </p>
                 </div>
                 <Switch checked={pubchemForce} onCheckedChange={setPubchemForce} />
               </div>
             </div>
-          )}
+          ) : null}
 
-          {pubchemBusy && !pubchemResult && (
+          {pubchemBusy && !pubchemResult ? (
             <div className="space-y-3 py-2">
               <div className="flex items-center gap-2">
                 <Loader2 className="size-4 animate-spin text-emerald-400" />
                 <p className="text-sm text-zinc-300">
-                  {pubchemProgress?.message || "正在准备查询 PubChem…"}
+                  {pubchemProgress?.message || "正在准备查询 PubChem..."}
                 </p>
               </div>
-              {pubchemProgress?.phase === 'lookup' && pubchemProgress.total != null && pubchemProgress.total > 0 && (
+              {pubchemProgress?.phase === "lookup" && pubchemProgress.total != null && pubchemProgress.total > 0 ? (
                 <div className="space-y-1.5">
-                  <div className="h-2 w-full rounded-full bg-zinc-800 overflow-hidden">
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-white/8">
                     <motion.div
-                      className="h-full rounded-full bg-emerald-500"
+                      className="h-full rounded-full bg-emerald-400"
                       initial={{ width: 0 }}
                       animate={{ width: `${((pubchemProgress.done || 0) / pubchemProgress.total) * 100}%` }}
                       transition={{ ease: "easeOut" }}
                     />
                   </div>
-                  <p className="text-xs text-zinc-500 text-right">
-                    {pubchemProgress.done || 0} / {pubchemProgress.total} 种药物
+                  <p className="text-right text-xs text-zinc-500">
+                    {pubchemProgress.done || 0} / {pubchemProgress.total} 个药物
                   </p>
                 </div>
-              )}
-              {pubchemProgress?.phase === 'enrich' && (
+              ) : null}
+              {pubchemProgress?.phase === "enrich" ? (
                 <div className="space-y-1">
                   <p className="text-xs text-zinc-500">
-                    识别 {pubchemProgress.resolved_drugs} 种，未识别 {pubchemProgress.unresolved_drugs} 种
+                    已识别 {pubchemProgress.resolved_drugs} 个，未识别 {pubchemProgress.unresolved_drugs} 个
                   </p>
-                  {(pubchemProgress.cache_hit ?? 0) > 0 && (
-                    <p className="text-xs text-emerald-500">
-                      缓存命中 {pubchemProgress.cache_hit} 种（跳过重复查询）
+                  {(pubchemProgress.cache_hit ?? 0) > 0 ? (
+                    <p className="text-xs text-emerald-400">
+                      缓存命中 {pubchemProgress.cache_hit} 个，减少了重复查询
                     </p>
-                  )}
+                  ) : null}
                 </div>
-              )}
+              ) : null}
             </div>
-          )}
+          ) : null}
 
-          {pubchemResult && (
+          {pubchemResult ? (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 text-sm"
+              className="space-y-3 rounded-[20px] border border-white/8 bg-white/[0.03] p-4 text-sm"
             >
               <div className="flex items-center gap-2 text-emerald-400">
                 <FlaskConical className="size-4" />
                 <span className="font-medium">补全完成</span>
               </div>
               <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-zinc-300">
-                <span>补全论文数：</span>
+                <span>补全文献数</span>
                 <span className="font-medium text-emerald-400">{pubchemResult.enriched_papers} 篇</span>
-                <span>补全字段数：</span>
+                <span>补全字段数</span>
                 <span className="font-medium text-emerald-400">{pubchemResult.fields_filled} 个</span>
-                <span>成功识别药物：</span>
-                <span className="font-medium text-zinc-200">{pubchemResult.resolved_drugs} 种</span>
-                <span>未识别药物：</span>
-                <span className="font-medium text-amber-400">{pubchemResult.unresolved_drugs} 种</span>
+                <span>成功识别药物</span>
+                <span className="font-medium text-zinc-200">{pubchemResult.resolved_drugs} 个</span>
+                <span>未识别药物</span>
+                <span className="font-medium text-amber-300">{pubchemResult.unresolved_drugs} 个</span>
               </div>
-              {pubchemResult.unresolved_drugs > 0 && (
-                <p className="text-xs text-zinc-500 pt-1">
-                  未识别的药物可能是复合名、缩写或非标准命名，PubChem 无法匹配。
-                </p>
-              )}
             </motion.div>
-          )}
+          ) : null}
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setPubchemDialog(false)} disabled={pubchemBusy}>
               {pubchemResult ? "关闭" : "取消"}
             </Button>
-            {!pubchemResult && !pubchemBusy && (
+            {!pubchemResult && !pubchemBusy ? (
               <Button onClick={handlePubchemEnrich}>
                 开始补全
               </Button>
-            )}
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <PaperDetail
-        paper={selectedPaper}
-        open={!!selectedPaper}
-        onClose={() => setSelectedPaper(null)}
-      />
+      <PaperDetail paper={selectedPaper} open={!!selectedPaper} onClose={() => setSelectedPaper(null)} />
     </div>
   );
 }
