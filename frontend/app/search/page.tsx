@@ -101,7 +101,7 @@ export default function SearchPage() {
         query: query.trim(),
         limit,
         databases: selectedDbs,
-        mode: mode === "multi" ? "multi_agent" : "single",
+        mode,
         use_planner: usePlanner,
         fetch_concurrency: fetchConcurrency,
         llm_concurrency: llmConcurrency,

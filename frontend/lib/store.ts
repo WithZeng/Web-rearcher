@@ -1,8 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { PipelineMessage, MetaResponse } from './api';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+import { resolveApiUrl } from './backend';
 
 interface StageData {
   papers_found?: number;
@@ -144,7 +143,7 @@ function mergePersistedState(
 
 async function fetchResults(taskId: string): Promise<Record<string, unknown>[]> {
   try {
-    const res = await fetch(`${API_BASE}/api/pipeline/result/${taskId}`);
+    const res = await fetch(resolveApiUrl(`/api/pipeline/result/${taskId}`));
     if (!res.ok) return [];
     const data = await res.json();
     return data.rows ?? [];

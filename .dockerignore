@@ -1,0 +1,17 @@
+.git
+.gitignore
+.venv
+.pytest_cache
+.playwright-cli
+.cursor
+.codex
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+models.json
+output
+frontend/.next
+frontend/node_modules
+tests

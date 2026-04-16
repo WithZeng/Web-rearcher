@@ -112,6 +112,7 @@ export default function SettingsPage() {
   const [httpProxy, setHttpProxy] = useState("");
   const [ieeeApiKey, setIeeeApiKey] = useState("");
   const [scopusApiKey, setScopusApiKey] = useState("");
+  const [grobidUrl, setGrobidUrl] = useState("");
   const [researchFeedback, setResearchFeedback] = useState<Feedback | null>(null);
   const [showNewModel, setShowNewModel] = useState(false);
   const [newName, setNewName] = useState("");
@@ -143,6 +144,7 @@ export default function SettingsPage() {
       setHttpProxy(cfg.http_proxy || "");
       setIeeeApiKey(cfg.ieee_api_key || "");
       setScopusApiKey(cfg.scopus_api_key || "");
+      setGrobidUrl(cfg.grobid_url || "");
       if (ns) setNotionStatus(ns);
       setBlacklistCount(bl?.count ?? 0);
     } finally {
@@ -220,13 +222,14 @@ export default function SettingsPage() {
         http_proxy: httpProxy || undefined,
         ieee_api_key: ieeeApiKey || undefined,
         scopus_api_key: scopusApiKey || undefined,
+        grobid_url: grobidUrl,
       });
       setResearchFeedback({ success: true, message: "文献获取相关配置已更新。" });
       await fetchData();
     } catch (err) {
       setResearchFeedback({ success: false, message: String(err) });
     }
-  }, [unpaywallEmail, httpProxy, ieeeApiKey, scopusApiKey, fetchData]);
+  }, [unpaywallEmail, httpProxy, ieeeApiKey, scopusApiKey, grobidUrl, fetchData]);
 
   const handleAddModel = useCallback(async () => {
     if (!newName.trim()) return;
@@ -326,6 +329,7 @@ export default function SettingsPage() {
     config?.has_notion,
     Boolean(config?.unpaywall_email || config?.http_proxy),
     Boolean(config?.ieee_api_key || config?.scopus_api_key),
+    Boolean(config?.grobid_url),
   ].filter(Boolean).length;
 
   return (
@@ -372,6 +376,7 @@ export default function SettingsPage() {
                   "NOTION_DB_NAME",
                   "UNPAYWALL_EMAIL",
                   "HTTP_PROXY",
+                  "GROBID_URL",
                 ].map((key) => (
                   <span key={key} className="rounded-full border border-white/10 bg-white/[0.045] px-3 py-1 text-xs text-zinc-300">
                     {key}
@@ -397,7 +402,7 @@ export default function SettingsPage() {
               </div>
               <div className="grid gap-4 sm:grid-cols-3">
                 {[
-                  { label: "已完成模块", value: `${configuredCount}/4`, tone: "text-cyan-300" },
+                  { label: "已完成模块", value: `${configuredCount}/5`, tone: "text-cyan-300" },
                   { label: "模型档案", value: String(models.length), tone: "text-white" },
                   { label: "Notion 记录", value: String(notionStatus?.record_count ?? 0), tone: "text-emerald-300" },
                 ].map((item) => (
@@ -554,6 +559,9 @@ export default function SettingsPage() {
                 </Field>
                 <Field label="HTTP 代理">
                   <Input value={httpProxy} onChange={(event) => setHttpProxy(event.target.value)} placeholder="http://127.0.0.1:7890" className="h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-100 placeholder:text-zinc-600" />
+                </Field>
+                <Field label="GROBID URL" hint={config?.grobid_url ? "已配置" : undefined}>
+                  <Input value={grobidUrl} onChange={(event) => setGrobidUrl(event.target.value)} placeholder="http://grobid:8070" className="h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-100 placeholder:text-zinc-600" />
                 </Field>
                 <Field label="IEEE API Key" hint={config?.ieee_api_key ? "已配置" : undefined}>
                   <Input type="password" value={ieeeApiKey} onChange={(event) => setIeeeApiKey(event.target.value)} placeholder="输入 IEEE API Key" className="h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-100 placeholder:text-zinc-600" />

@@ -1,6 +1,5 @@
 import type { PipelineMessage } from './api';
-
-const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
+import { getBrowserBackendWsBase } from './backend';
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY_MS = 2000;
@@ -15,7 +14,8 @@ export function connectPipeline(
   let currentWs: WebSocket | null = null;
 
   function connect() {
-    const ws = new WebSocket(`${WS_BASE}/ws/pipeline/${taskId}`);
+    const wsBase = getBrowserBackendWsBase();
+    const ws = new WebSocket(`${wsBase}/ws/pipeline/${taskId}`);
     currentWs = ws;
 
     ws.onmessage = (event) => {

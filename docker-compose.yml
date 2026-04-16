@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      GROBID_URL: ${GROBID_URL:-http://grobid:8070}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./output:/app/output
+      - ./.env:/app/.env
+      - ./models.json:/app/models.json
+    depends_on:
+      - grobid
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_SERVER_API_URL: http://backend:8000
+    restart: unless-stopped
+    environment:
+      NEXT_SERVER_API_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+  grobid:
+    image: lfoppiano/grobid:0.8.1
+    restart: unless-stopped
+    expose:
+      - "8070"

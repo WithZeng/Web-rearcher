@@ -49,6 +49,8 @@
 }
 
 :root {
+  --font-sans: "Avenir Next", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --font-geist-mono: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
   --background: oklch(0.1 0.01 250);
   --foreground: oklch(0.98 0.01 250);
   --card: oklch(0.15 0.015 250);

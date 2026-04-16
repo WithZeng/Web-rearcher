@@ -1,14 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
-
-function getBrowserBackendBase() {
-  if (API_BASE) {
-    return API_BASE;
-  }
-  if (typeof window !== 'undefined') {
-    return `http://${window.location.hostname}:8000`;
-  }
-  return API_BASE;
-}
+import { resolveApiUrl } from './backend';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers);
@@ -17,7 +7,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers.set('Content-Type', 'application/json');
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(resolveApiUrl(path), {
     ...options,
     headers,
   });
@@ -65,7 +55,7 @@ export const api = {
       formData.append('mode', params.mode);
       formData.append('llm_concurrency', String(params.llm_concurrency));
 
-      return request<{ task_id: string }>(`${getBrowserBackendBase()}/api/pipeline/pdf`, {
+      return request<{ task_id: string }>('/api/pipeline/pdf', {
         method: 'POST',
         body: formData,
       });
@@ -100,8 +90,7 @@ export const api = {
     ): Promise<PubchemEnrichResult> => {
       return new Promise(async (resolve, reject) => {
         try {
-          const sseBase = getBrowserBackendBase();
-          const res = await fetch(`${sseBase}/api/history/enrich-pubchem?force=${force}`, {
+          const res = await fetch(resolveApiUrl(`/api/history/enrich-pubchem?force=${force}`), {
             method: 'POST',
             headers: { 'Accept': 'text/event-stream' },
           });
@@ -150,7 +139,7 @@ export const api = {
 
   export: {
     download: async (format: string, rows: Record<string, unknown>[]) => {
-      const res = await fetch(`${API_BASE}/api/export/${format}`, {
+      const res = await fetch(resolveApiUrl(`/api/export/${format}`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rows }),
@@ -215,8 +204,7 @@ export const api = {
     ): Promise<NotionPushResult> => {
       return new Promise(async (resolve, reject) => {
         try {
-          const sseBase = getBrowserBackendBase();
-          const res = await fetch(`${sseBase}/api/notion/push`, {
+          const res = await fetch(resolveApiUrl('/api/notion/push'), {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -375,6 +363,7 @@ export interface ConfigResponse {
   http_proxy: string;
   ieee_api_key: string;
   scopus_api_key: string;
+  grobid_url: string;
   all_databases: string[];
   default_databases: string[];
 }
@@ -391,6 +380,7 @@ export interface ConfigUpdate {
   http_proxy?: string;
   ieee_api_key?: string;
   scopus_api_key?: string;
+  grobid_url?: string;
 }
 
 export interface EnvImportResult {

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import signal
 import time
 from contextlib import asynccontextmanager
 
@@ -16,6 +15,7 @@ from lit_researcher.output import ALL_COLUMNS, ALL_CN
 from lit_researcher.ui_helpers import FIELD_LABELS, RECOMMENDED_QUERIES
 
 logger = logging.getLogger(__name__)
+CORS_ALLOWED_ORIGIN_REGEX = r"https?://(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\]):3000$"
 
 
 @asynccontextmanager
@@ -30,7 +30,8 @@ _START_TIME = time.monotonic()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[],
+    allow_origin_regex=CORS_ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

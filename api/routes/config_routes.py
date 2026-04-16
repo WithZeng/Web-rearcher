@@ -29,6 +29,7 @@ class ConfigResponse(BaseModel):
     http_proxy: str
     ieee_api_key: str
     scopus_api_key: str
+    grobid_url: str
     all_databases: list[str]
     default_databases: list[str]
 
@@ -45,6 +46,7 @@ class ConfigUpdateRequest(BaseModel):
     http_proxy: str | None = None
     ieee_api_key: str | None = None
     scopus_api_key: str | None = None
+    grobid_url: str | None = None
 
 
 class TestConnectionRequest(BaseModel):
@@ -83,6 +85,7 @@ async def get_config():
         http_proxy=config.HTTP_PROXY,
         ieee_api_key=config.IEEE_API_KEY,
         scopus_api_key=config.SCOPUS_API_KEY,
+        grobid_url=config.GROBID_URL,
         all_databases=config.ALL_DATABASES,
         default_databases=config.DEFAULT_DATABASES,
     )
@@ -128,6 +131,9 @@ async def update_config(req: ConfigUpdateRequest):
     if req.scopus_api_key is not None:
         save_to_env("SCOPUS_API_KEY", req.scopus_api_key)
         config.SCOPUS_API_KEY = req.scopus_api_key
+    if req.grobid_url is not None:
+        save_to_env("GROBID_URL", req.grobid_url)
+        config.GROBID_URL = req.grobid_url
 
     return {"ok": True}
 
