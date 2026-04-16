@@ -74,6 +74,19 @@ RECOMMENDED_QUERIES = [
 ]
 
 
+def _safe_float(value: object, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # ── Async bridge ─────────────────────────────────────────────────────────────
 
 
@@ -367,7 +380,7 @@ def cleanup_history(min_quality: float = 0.0) -> dict:
 
         kept = []
         for r in rows:
-            q = float(r.get("_data_quality") or 0)
+            q = _safe_float(r.get("_data_quality"))
             if q < threshold:
                 continue
             if not str(r.get("drug_name") or "").strip():
@@ -538,14 +551,14 @@ def filter_history_duplicates(papers: list[dict]) -> tuple[list[dict], int]:
 
 def _row_quality_score(row: dict) -> float:
     """Compute a comparable quality score for dedup – higher is better."""
-    q = float(row.get("_data_quality") or 0)
+    q = _safe_float(row.get("_data_quality"))
     ts = str(row.get("text_source") or "none")
     source_bonus = 0.0 if ts in ("none", "") else (0.3 if ts == "abstract" else 0.5)
     from .output import _CORE_FIELDS
     core_count = sum(1 for f in _CORE_FIELDS if row.get(f))
     _KEY_FIELDS = ["drug_name", "gelma_concentration", "source_title", "source_doi"]
     key_complete = 1.0 if all(str(row.get(k) or "").strip() for k in _KEY_FIELDS) else 0.0
-    review_score = float(row.get("_review_score") or row.get("_quality_total") or 0)
+    review_score = _safe_float(row.get("_review_score"), _safe_float(row.get("_quality_total")))
     return q + source_bonus + core_count * 0.01 + key_complete + review_score * 0.001
 
 
@@ -593,7 +606,7 @@ def merge_history_rows(
     if remove_empty:
         result = []
         for r in merged:
-            q = float(r.get("_data_quality") or 0)
+            q = _safe_float(r.get("_data_quality"))
             ts = str(r.get("text_source") or "none")
             has_core = any(r.get(f) for f in _CORE_FIELDS)
             if q <= 0 and ts == "none" and not has_core:
@@ -602,14 +615,14 @@ def merge_history_rows(
         merged = result
 
     if min_quality > 0:
-        merged = [r for r in merged if float(r.get("_data_quality") or 0) >= min_quality]
+        merged = [r for r in merged if _safe_float(r.get("_data_quality")) >= min_quality]
 
     if pushed_filter == "pushed":
         merged = [r for r in merged if r.get("_pushed_to_notion")]
     elif pushed_filter == "unpushed":
         merged = [r for r in merged if not r.get("_pushed_to_notion")]
 
-    merged.sort(key=lambda r: float(r.get("_data_quality") or 0), reverse=True)
+    merged.sort(key=lambda r: _safe_float(r.get("_data_quality")), reverse=True)
     return merged
 
 

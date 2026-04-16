@@ -182,6 +182,19 @@ _CORE_FIELDS = [
 ]
 
 
+def _safe_float(value: object, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def filter_empty_rows(rows: list[dict]) -> tuple[list[dict], list[dict]]:
     """Remove rows with no useful extracted data.
     
@@ -190,7 +203,7 @@ def filter_empty_rows(rows: list[dict]) -> tuple[list[dict], list[dict]]:
     kept, discarded = [], []
     for r in rows:
         quality = r.get("_data_quality")
-        q = float(quality) if quality is not None else 0.0
+        q = _safe_float(quality)
         if q <= 0:
             has_core = any(r.get(f) for f in _CORE_FIELDS)
             if not has_core:

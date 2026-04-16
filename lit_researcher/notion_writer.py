@@ -17,6 +17,19 @@ logger = logging.getLogger(__name__)
 _NOTION_RATE_DELAY = 0.35
 
 
+def _safe_float(value: object, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _label(field: str) -> str:
     """Get the Chinese display label for a field, falling back to the raw name."""
     return FIELD_LABELS.get(field, field)
@@ -126,7 +139,7 @@ def _row_to_properties(row: dict) -> dict:
 
     quality = row.get("_data_quality")
     if quality is not None:
-        props[_label("_data_quality")] = {"number": float(quality)}
+        props[_label("_data_quality")] = {"number": _safe_float(quality)}
 
     text_source = row.get("text_source", "")
     if text_source:
@@ -153,7 +166,7 @@ def _compute_patch(local_row: dict, notion_values: dict) -> dict:
     notion_quality = notion_values.get("_data_quality")
     local_quality = local_row.get("_data_quality")
     if notion_quality is None and local_quality is not None:
-        patch_props[_label("_data_quality")] = {"number": float(local_quality)}
+        patch_props[_label("_data_quality")] = {"number": _safe_float(local_quality)}
 
     return patch_props
 
@@ -296,7 +309,7 @@ def _passes_quality_gate(row: dict) -> bool:
     """
     from .output import _CORE_FIELDS
 
-    q = float(row.get("_data_quality") or 0)
+    q = _safe_float(row.get("_data_quality"))
     if q < _MIN_PUSH_QUALITY:
         return False
     if not str(row.get("drug_name") or "").strip():

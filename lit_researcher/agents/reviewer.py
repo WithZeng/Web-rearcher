@@ -44,6 +44,19 @@ def _check_range(val, lo: float, hi: float, name: str) -> str | None:
     return None
 
 
+def _extract_positive_numbers(val) -> list[float]:
+    """Extract positive numeric tokens from mixed text safely."""
+    if val is None:
+        return []
+    matches = re.findall(r"\d+(?:\.\d+)?|\.\d+", str(val))
+    numbers: list[float] = []
+    for token in matches:
+        num = _safe_float(token)
+        if num is not None and num > 0:
+            numbers.append(num)
+    return numbers
+
+
 def review_row(row: dict) -> dict:
     """Review a single extracted row.
 
@@ -131,14 +144,12 @@ def review_row(row: dict) -> dict:
     # --- Microsphere size typical range (1-5000 μm) ---
     ms = row.get("microsphere_size")
     if ms:
-        nums = re.findall(r"[\d.]+", str(ms))
-        if nums:
-            valid_nums = [float(n) for n in nums if float(n) > 0]
-            if valid_nums:
-                max_size = max(valid_nums)
-                if max_size < 1 or max_size > 5000:
-                    flags.append(f"microsphere_size out of typical range: {ms}")
-                    score -= 10
+        valid_nums = _extract_positive_numbers(ms)
+        if valid_nums:
+            max_size = max(valid_nums)
+            if max_size < 1 or max_size > 5000:
+                flags.append(f"microsphere_size out of typical range: {ms}")
+                score -= 10
 
     # --- Confidence reliability: too many inferred vs paper values ---
     conf = row.get("_confidence", {}) or {}

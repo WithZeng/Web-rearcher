@@ -521,6 +521,19 @@ async def extract_batch(
     return results
 
 
+def _build_failed_extraction_row(paper: dict, error: Exception | str) -> dict:
+    message = str(error).strip() or "unknown extraction error"
+    return {
+        **{f: None for f in config.FIELDS},
+        "paper_id": paper.get("paper_id", ""),
+        "source_title": paper.get("title", ""),
+        "source_doi": paper.get("doi", ""),
+        "text_source": paper.get("text_source", "none"),
+        "_data_quality": 0.0,
+        "_skip_reason": f"提取异常: {message}",
+    }
+
+
 async def extract_batch_with_progress(
     papers_with_text: list[dict],
     on_complete: Callable[[int, int, dict], None] | None = None,
@@ -536,7 +549,11 @@ async def extract_batch_with_progress(
     total = len(papers_with_text)
 
     async def _tracked(idx: int, paper: dict) -> tuple[int, dict]:
-        result = await extract_one(sem, paper, save_checkpoint=False)
+        try:
+            result = await extract_one(sem, paper, save_checkpoint=False)
+        except Exception as exc:
+            logger.warning("extract_one failed during progress batch: %s", exc)
+            result = _build_failed_extraction_row(paper, exc)
         return idx, result
 
     tasks = [asyncio.ensure_future(_tracked(i, p)) for i, p in enumerate(papers_with_text)]
