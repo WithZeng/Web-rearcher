@@ -191,10 +191,15 @@ export const api = {
       return Array.isArray(res) ? res : res.models;
     },
     create: (model: ModelProfile) =>
-      request<{ ok: boolean }>('/api/models', {
+      request<ModelProfile>('/api/models', {
         method: 'POST',
         body: JSON.stringify(model),
       }),
+    apply: (name: string) =>
+      request<{ applied: string }>(
+        `/api/models/${encodeURIComponent(name)}/apply`,
+        { method: 'POST' },
+      ),
     delete: (name: string) =>
       request<{ ok: boolean }>(
         `/api/models/${encodeURIComponent(name)}`,

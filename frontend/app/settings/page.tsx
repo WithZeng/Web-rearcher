@@ -238,15 +238,21 @@ export default function SettingsPage() {
       api_type: apiType,
     };
     try {
-      await api.models.create(profile);
-      setModels((prev) => [...prev, profile]);
+      const savedProfile = await api.models.create(profile);
+      setModels((prev) => [...prev, savedProfile]);
       setNewName("");
       setShowNewModel(false);
-      setModelFeedback({ success: true, message: `已保存模型档案「${profile.name}」。` });
+      setModelFeedback({
+        success: true,
+        message:
+          config?.has_api_key && !apiKey.trim()
+            ? `已保存模型档案「${savedProfile.name}」，并继承当前 API Key。`
+            : `已保存模型档案「${savedProfile.name}」。`,
+      });
     } catch (err) {
       setModelFeedback({ success: false, message: String(err) });
     }
-  }, [newName, baseUrl, model, apiKey, apiType]);
+  }, [newName, baseUrl, model, apiKey, apiType, config?.has_api_key]);
 
   const handleDeleteModel = useCallback(async (name: string) => {
     try {
@@ -262,12 +268,7 @@ export default function SettingsPage() {
     setModel(profile.model || "");
     setApiType(profile.api_type || "openai");
     try {
-      await api.config.update({
-        api_key: profile.api_key,
-        base_url: profile.base_url || "",
-        model: profile.model || "",
-        api_type: profile.api_type || "openai",
-      });
+      await api.models.apply(profile.name);
       setLlmFeedback({ success: true, message: `已切换到模型档案「${profile.name}」。` });
       await fetchData();
     } catch (err) {
@@ -604,6 +605,9 @@ export default function SettingsPage() {
                     <Field label="档案名称">
                       <Input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="例如：组会专用 GPT-5.4" className="h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-100 placeholder:text-zinc-600" />
                     </Field>
+                    <p className="mt-3 text-xs leading-6 text-zinc-400">
+                      未重新输入的 API Key 会自动继承当前已保存配置，避免档案只保存了模型名却丢失鉴权信息。
+                    </p>
                     <div className="mt-4 flex gap-2">
                       <Button className="rounded-full bg-cyan-400 text-slate-950 hover:bg-cyan-300" onClick={handleAddModel} disabled={!newName.trim()}>保存档案</Button>
                       <Button variant="outline" className="rounded-full border-white/15 bg-white/5 text-zinc-100 hover:bg-white/10" onClick={() => { setShowNewModel(false); setNewName(""); }}>取消</Button>
