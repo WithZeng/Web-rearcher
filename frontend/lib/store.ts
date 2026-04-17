@@ -1,12 +1,13 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { PipelineMessage, MetaResponse } from './api';
+import type { PipelineMessage, MetaResponse, SearchStats } from './api';
 import { resolveApiUrl } from './backend';
 
 interface StageData {
   papers_found?: number;
   papers_passed?: number;
   rows_extracted?: number;
+  search_stats?: SearchStats;
 }
 
 interface PipelineState {
@@ -250,10 +251,13 @@ export const useAppStore = create<AppStore>()(
             ...state.pipeline,
             progress: msg.progress ?? state.pipeline.progress,
             currentStage: msg.stage ?? state.pipeline.currentStage,
-            stageMessage: msg.message ?? state.pipeline.stageMessage,
+            stageMessage: msg.searchStats
+              ? `${msg.message ?? state.pipeline.stageMessage} · 原始 ${msg.searchStats.raw_count} / 去重 ${msg.searchStats.deduped_count} / 进入处理 ${msg.searchStats.returned_count}`
+              : msg.message ?? state.pipeline.stageMessage,
             stageData: {
               ...state.pipeline.stageData,
               ...data,
+              ...(msg.searchStats ? { search_stats: msg.searchStats } : {}),
             },
           },
         }));

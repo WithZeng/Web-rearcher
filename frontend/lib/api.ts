@@ -75,8 +75,9 @@ export const api = {
         `/api/pipeline/cancel/${taskId}`,
         { method: 'POST' },
       ),
+    live: () => request<PipelineTaskSummary[]>('/api/pipeline/live'),
     status: (taskId: string) =>
-      request<{ task_id: string; done: boolean; error: string | null; result_count: number | null }>(
+      request<PipelineTaskStatus>(
         `/api/pipeline/status/${taskId}`,
       ),
   },
@@ -299,12 +300,46 @@ export interface ServerPdfEntry {
   modified_at: string;
 }
 
+export interface PipelineTaskSummary {
+  task_id: string;
+  kind: 'search' | 'doi' | 'pdf' | string;
+  title: string;
+  state: 'running' | 'done' | 'error' | 'cancelled' | string;
+  current_stage: string;
+  progress: number;
+  detail: string;
+  created_at: string;
+  updated_at: string;
+  result_count: number | null;
+  cancelled: boolean;
+  activity_text: string;
+  papers_found?: number | null;
+  papers_passed?: number | null;
+  rows_extracted?: number | null;
+}
+
+export interface PipelineTaskStatus extends PipelineTaskSummary {
+  done: boolean;
+  error: string | null;
+  messages: Record<string, unknown>[];
+}
+
 export interface MetaResponse {
   fields: string[];
   field_labels: Record<string, string>;
   recommended_queries: string[];
   all_databases: string[];
   default_databases: string[];
+}
+
+export interface SearchStats {
+  requested_limit: number;
+  per_db_limit: number;
+  db_counts: Record<string, number>;
+  raw_count: number;
+  deduped_count: number;
+  returned_count: number;
+  database_count: number;
 }
 
 export interface SearchMetadata {
@@ -452,6 +487,7 @@ export interface PipelineMessage {
   message?: string;
   activityText?: string;
   data?: Record<string, unknown>;
+  searchStats?: SearchStats;
   rows?: Record<string, unknown>[];
   stats?: { total: number; fulltext_rate: number; avg_quality: number };
 }

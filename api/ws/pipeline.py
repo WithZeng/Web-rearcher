@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -42,8 +43,15 @@ class CancelledByUser(Exception):
     """Raised when the task is cancelled by the user."""
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 @dataclass
 class PipelineTask:
+    task_id: str = ""
+    kind: str = "search"
+    title: str = ""
     task: asyncio.Task | None = None
     ws_connections: set[WebSocket] = field(default_factory=set)
     messages: list[dict] = field(default_factory=list)
@@ -51,6 +59,15 @@ class PipelineTask:
     error: str | None = None
     cancelled: bool = False
     created_at: float = field(default_factory=time.monotonic)
+    created_at_iso: str = field(default_factory=_now_iso)
+    updated_at: float = field(default_factory=time.monotonic)
+    updated_at_iso: str = field(default_factory=_now_iso)
+    state: str = "running"
+    current_stage: str = ""
+    progress: float = 0.0
+    detail: str = ""
+    activity_text: str = ""
+    stage_data: dict[str, int] = field(default_factory=dict)
     finished_at: float | None = None
 
 
@@ -81,6 +98,38 @@ def _count_running_tasks() -> int:
     )
 
 
+def _build_task_summary(task_id: str, entry: PipelineTask) -> dict[str, Any]:
+    return {
+        "task_id": task_id,
+        "kind": entry.kind,
+        "title": entry.title,
+        "state": entry.state,
+        "current_stage": entry.current_stage,
+        "progress": round(entry.progress, 4),
+        "detail": entry.detail,
+        "created_at": entry.created_at_iso,
+        "updated_at": entry.updated_at_iso,
+        "result_count": len(entry.result) if entry.result is not None else None,
+        "cancelled": entry.cancelled,
+        "activity_text": entry.activity_text,
+        "papers_found": entry.stage_data.get("papers_found"),
+        "papers_passed": entry.stage_data.get("papers_passed"),
+        "rows_extracted": entry.stage_data.get("rows_extracted"),
+    }
+
+
+def list_live_tasks() -> list[dict[str, Any]]:
+    _purge_expired_tasks()
+
+    def _sort_key(item: tuple[str, PipelineTask]) -> tuple[int, float]:
+        _, entry = item
+        state_rank = 0 if entry.state == "running" else 1
+        return (state_rank, -entry.updated_at)
+
+    items = sorted(_pipeline_tasks.items(), key=_sort_key)
+    return [_build_task_summary(task_id, entry) for task_id, entry in items]
+
+
 def _build_stage_msg(stage: str, ctx: PipelineContext | None = None, detail: str | None = None) -> dict:
     progress, label = STAGE_META.get(stage, (0.0, stage))
     msg: dict[str, Any] = {
@@ -94,6 +143,8 @@ def _build_stage_msg(stage: str, ctx: PipelineContext | None = None, detail: str
         msg["papers_passed"] = len(ctx.passed_papers)
         msg["rows_extracted"] = len(ctx.rows)
         msg["rows_reviewed"] = len(ctx.reviewed_rows)
+        if getattr(ctx, "_search_stats", None):
+            msg["search_stats"] = ctx._search_stats
     if detail:
         msg["detail"] = detail
     return msg
@@ -114,6 +165,38 @@ async def _broadcast(task_id: str, msg: dict, *, ephemeral: bool = False) -> Non
     entry = _pipeline_tasks.get(task_id)
     if entry is None:
         return
+    entry.updated_at = time.monotonic()
+    entry.updated_at_iso = _now_iso()
+    msg_type = msg.get("type")
+    if msg_type == "activity":
+        entry.activity_text = str(msg.get("text") or "")
+    elif msg_type == "stage":
+        stage = str(msg.get("stage") or "")
+        if stage:
+            entry.current_stage = stage
+        if msg.get("progress") is not None:
+            entry.progress = float(msg["progress"])
+        detail = str(msg.get("detail") or msg.get("label") or "")
+        if detail:
+            entry.detail = detail
+        stage_data = {
+            key: int(msg[key])
+            for key in ("papers_found", "papers_passed", "rows_extracted")
+            if msg.get(key) is not None
+        }
+        if stage_data:
+            entry.stage_data = {
+                **entry.stage_data,
+                **stage_data,
+            }
+        if stage == "done":
+            entry.state = "done"
+            entry.activity_text = ""
+        elif stage == "error":
+            entry.state = "cancelled" if entry.cancelled else "error"
+            entry.activity_text = ""
+        else:
+            entry.state = "running"
     if not ephemeral:
         entry.messages.append(msg)
     payload = json.dumps(msg, ensure_ascii=False)
@@ -503,7 +586,12 @@ def start_pipeline_task(
     if _count_running_tasks() >= _MAX_CONCURRENT_TASKS:
         raise RuntimeError(f"已达到最大并发任务数 ({_MAX_CONCURRENT_TASKS})，请等待当前任务完成")
     task_id = uuid.uuid4().hex
-    entry = PipelineTask()
+    entry = PipelineTask(
+        task_id=task_id,
+        kind="search",
+        title=query,
+        detail="等待任务进度",
+    )
     _pipeline_tasks[task_id] = entry
     entry.task = asyncio.get_running_loop().create_task(
         _run_pipeline_task(
@@ -532,7 +620,12 @@ def start_doi_task(
     if _count_running_tasks() >= _MAX_CONCURRENT_TASKS:
         raise RuntimeError(f"已达到最大并发任务数 ({_MAX_CONCURRENT_TASKS})，请等待当前任务完成")
     task_id = uuid.uuid4().hex
-    entry = PipelineTask()
+    entry = PipelineTask(
+        task_id=task_id,
+        kind="doi",
+        title=f"DOI import ({len(dois)} papers)",
+        detail="等待任务进度",
+    )
     _pipeline_tasks[task_id] = entry
     entry.task = asyncio.get_running_loop().create_task(
         _run_doi_task(task_id, dois, mode, fetch_concurrency, llm_concurrency)
@@ -549,7 +642,12 @@ def start_pdf_task(
     if _count_running_tasks() >= _MAX_CONCURRENT_TASKS:
         raise RuntimeError(f"已达到最大并发任务数 ({_MAX_CONCURRENT_TASKS})，请等待当前任务完成")
     task_id = uuid.uuid4().hex
-    entry = PipelineTask()
+    entry = PipelineTask(
+        task_id=task_id,
+        kind="pdf",
+        title=f"PDF import ({len(files)} files)",
+        detail="等待任务进度",
+    )
     _pipeline_tasks[task_id] = entry
     entry.task = asyncio.get_running_loop().create_task(
         _run_pdf_task(task_id, files, mode, llm_concurrency)
@@ -565,6 +663,13 @@ def cancel_task(task_id: str) -> bool:
         entry.cancelled = True
         entry.task.cancel()
         entry.error = "用户取消"
+        entry.state = "cancelled"
+        entry.current_stage = "error"
+        entry.progress = 1.0
+        entry.detail = "任务已取消"
+        entry.activity_text = ""
+        entry.updated_at = time.monotonic()
+        entry.updated_at_iso = _now_iso()
         entry.finished_at = time.monotonic()
         return True
     return False
@@ -576,6 +681,7 @@ def is_task_cancelled(task_id: str) -> bool:
 
 
 def get_task(task_id: str) -> PipelineTask | None:
+    _purge_expired_tasks()
     return _pipeline_tasks.get(task_id)
 
 

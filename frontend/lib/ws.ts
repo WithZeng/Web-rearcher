@@ -33,6 +33,7 @@ export function connectPipeline(
           stage: raw.stage,
           progress: raw.progress,
           message: raw.detail ?? raw.label,
+          searchStats: raw.search_stats,
           data: {
             papers_found: raw.papers_found,
             papers_passed: raw.papers_passed,

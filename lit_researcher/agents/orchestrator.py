@@ -1,4 +1,4 @@
-"""Orchestrator — drives the multi-agent pipeline.
+"""Orchestrator -- drives the multi-agent pipeline.
 
 Supports two modes:
   - "single": planner -> search -> retrieval -> quality_filter -> extraction (unified) -> reviewer
@@ -14,18 +14,18 @@ from collections.abc import Callable
 from typing import Any
 
 from .. import config
-from ..extract import _compute_data_quality
 from ..checkpoint import filter_unprocessed
+from ..extract import _compute_data_quality
 from .base import PipelineContext
-from .planner import PlannerAgent
-from .search_agent import SearchAgent
-from .retrieval_agent import RetrievalAgent
-from .quality_filter import QualityFilterAgent
-from .extraction_agent import ExtractionAgent
-from .reviewer import ReviewerAgent
-from .gelma_agent import GelmaAgent
 from .drug_agent import DrugAgent
+from .extraction_agent import ExtractionAgent
+from .gelma_agent import GelmaAgent
+from .planner import PlannerAgent
+from .quality_filter import QualityFilterAgent
 from .release_agent import ReleaseAgent
+from .retrieval_agent import RetrievalAgent
+from .reviewer import ReviewerAgent
+from .search_agent import SearchAgent
 from .source_agent import SourceAgent
 
 logger = logging.getLogger(__name__)
@@ -43,12 +43,7 @@ def _pick_best_value(a, b):
 
 
 def _merge_sub_results(ctx: PipelineContext) -> None:
-    """Merge results from 4 sub-extraction agents into ctx.rows.
-
-    When multiple sub-agents return a value for the same field (shouldn't
-    normally happen since fields are disjoint), pick the longer string.
-    Also merges _confidence dicts from all sub-agents.
-    """
+    """Merge results from 4 sub-extraction agents into ctx.rows."""
     n = len(ctx.passed_papers)
     rows: list[dict] = []
 
@@ -56,16 +51,15 @@ def _merge_sub_results(ctx: PipelineContext) -> None:
         merged: dict = {}
         merged_conf: dict = {}
 
-        for sub in [ctx._gelma_results, ctx._drug_results,
-                     ctx._release_results, ctx._source_results]:
+        for sub in [ctx._gelma_results, ctx._drug_results, ctx._release_results, ctx._source_results]:
             if i < len(sub):
-                for k, v in sub[i].items():
-                    if k == "_confidence" and isinstance(v, dict):
-                        for ck, cv in v.items():
-                            if cv is not None and (merged_conf.get(ck) is None or cv == "paper"):
-                                merged_conf[ck] = cv
+                for key, value in sub[i].items():
+                    if key == "_confidence" and isinstance(value, dict):
+                        for conf_key, conf_value in value.items():
+                            if conf_value is not None and (merged_conf.get(conf_key) is None or conf_value == "paper"):
+                                merged_conf[conf_key] = conf_value
                         continue
-                    merged[k] = _pick_best_value(merged.get(k), v)
+                    merged[key] = _pick_best_value(merged.get(key), value)
 
         paper = ctx.passed_papers[i] if i < len(ctx.passed_papers) else {}
         if not merged.get("source_title"):
@@ -96,8 +90,8 @@ async def _enrich_with_pubchem(rows: list[dict], on_activity: Callable[[str], An
     from ..pubchem import batch_lookup, enrich_row
 
     drug_names: set[str] = set()
-    for r in rows:
-        name = str(r.get("drug_name") or "").strip()
+    for row in rows:
+        name = str(row.get("drug_name") or "").strip()
         if name:
             drug_names.add(name)
 
@@ -105,26 +99,26 @@ async def _enrich_with_pubchem(rows: list[dict], on_activity: Callable[[str], An
         return
 
     if on_activity:
-        on_activity(f"正在从 PubChem 查询 {len(drug_names)} 种药物的化学性质...")
+        on_activity(f"Querying PubChem for {len(drug_names)} unique drugs...")
 
-    cache, pc_stats = await batch_lookup(drug_names)
+    cache, stats = await batch_lookup(drug_names)
 
-    if on_activity and pc_stats.get("cache_hit"):
-        on_activity(f"PubChem 缓存命中 {pc_stats['cache_hit']} 种，查询 {pc_stats['queried']} 种")
+    if on_activity and stats.get("cache_hit"):
+        on_activity(f"PubChem cache hit {stats['cache_hit']} drugs, queried {stats['queried']} drugs")
 
     total_filled = 0
-    for r in rows:
-        name = str(r.get("drug_name") or "").strip()
+    for row in rows:
+        name = str(row.get("drug_name") or "").strip()
         if name and name in cache and cache[name]:
-            n = enrich_row(r, cache[name])
-            if n:
-                total_filled += n
-                r["_data_quality"] = _compute_data_quality(r)
+            filled = enrich_row(row, cache[name])
+            if filled:
+                total_filled += filled
+                row["_data_quality"] = _compute_data_quality(row)
 
     if total_filled:
         logger.info("PubChem enriched %d fields across %d drugs", total_filled, len([d for d in cache.values() if d]))
         if on_activity:
-            on_activity(f"PubChem 补全了 {total_filled} 个字段")
+            on_activity(f"PubChem filled {total_filled} fields")
 
 
 async def _run_sub_agents_parallel(ctx: PipelineContext) -> PipelineContext:
@@ -144,9 +138,9 @@ async def _run_sub_agents_parallel(ctx: PipelineContext) -> PipelineContext:
         return_exceptions=True,
     )
 
-    for r in results:
-        if isinstance(r, Exception):
-            logger.warning("Sub-agent failed: %s", r)
+    for result in results:
+        if isinstance(result, Exception):
+            logger.warning("Sub-agent failed: %s", result)
 
     return ctx
 
@@ -166,22 +160,7 @@ async def run_pipeline(
     pause_after_filter: Callable[[PipelineContext], bool] | None = None,
     cancel_check: Callable[[], None] | None = None,
 ) -> list[dict]:
-    """Run the full pipeline and return reviewed rows.
-
-    Parameters
-    ----------
-    mode : str
-        "single" for unified ExtractionAgent, "multi" for 4 sub-agents.
-    on_activity : callable | None
-        Fine-grained activity callback for real-time UI updates.
-    resume : bool
-        If True, skip papers already in the checkpoint file.
-    pause_after_filter : callable | None
-        If provided, called after QualityFilter with ``(ctx)``.
-        Return ``False`` to abort the pipeline (skip extraction).
-    cancel_check : callable | None
-        Called between stages; should raise to abort the pipeline.
-    """
+    """Run the full pipeline and return reviewed rows."""
     ctx = PipelineContext(
         query=query,
         limit=limit or config.MAX_RESULTS,
@@ -198,106 +177,111 @@ async def run_pipeline(
         if on_stage:
             on_stage(stage, ctx)
 
-    # 1. Planner (optional)
     if use_planner:
-        ctx.emit_activity("正在生成检索策略...")
+        ctx.emit_activity("Generating search strategy...")
         ctx = await PlannerAgent().run_timed(ctx)
         _notify("planner")
 
-    # 2. Search
     db_names = ", ".join(ctx.databases)
-    ctx.emit_activity(f"正在搜索 {db_names}...")
+    ctx.emit_activity(f"Searching {db_names}...")
     ctx = await SearchAgent().run_timed(ctx)
     _notify("search")
     if not ctx.papers:
         logger.warning("No papers found for query: %s", query)
         return []
 
-    ctx.emit_activity(f"检索到 {len(ctx.papers)} 篇文献")
+    search_stats = ctx._search_stats or {}
+    raw_count = int(search_stats.get("raw_count") or len(ctx.papers))
+    deduped_count = int(search_stats.get("deduped_count") or len(ctx.papers))
+    db_counts = search_stats.get("db_counts") or {}
+    if db_counts:
+        parts = [f"{db}:{count}" for db, count in db_counts.items()]
+        ctx.emit_activity(f"Search complete: raw {raw_count}, deduped {deduped_count}, per-db {', '.join(parts)}")
+    else:
+        ctx.emit_activity(f"Search complete: raw {raw_count}, deduped {deduped_count}")
 
-    # 2b. Resume: skip already-processed papers
     if resume:
         ctx.papers = filter_unprocessed(ctx.papers)
         if not ctx.papers:
             logger.info("Resume: all papers already processed")
             return []
 
-    # 2c. Blacklist: skip DOIs that previously failed to fetch
     from ..blacklist import filter_blacklisted
-    before_bl = len(ctx.papers)
-    ctx.papers = filter_blacklisted(ctx.papers)
-    if len(ctx.papers) < before_bl:
-        skipped = before_bl - len(ctx.papers)
-        ctx.emit_activity(f"跳过 {skipped} 个黑名单 DOI，剩余 {len(ctx.papers)} 篇")
-        logger.info("Blacklist removed %d papers", skipped)
 
-    # 2d. History dedup: skip papers already in previous task results
+    before_blacklist = len(ctx.papers)
+    ctx.papers = filter_blacklisted(ctx.papers)
+    blacklist_skipped = before_blacklist - len(ctx.papers)
+    ctx.emit_activity(f"Blacklist filtered {blacklist_skipped}, remaining {len(ctx.papers)}")
+    if blacklist_skipped:
+        logger.info("Blacklist removed %d papers", blacklist_skipped)
+
     from ..ui_helpers import filter_history_duplicates
+
     ctx.papers, hist_skipped = filter_history_duplicates(ctx.papers)
+    ctx.emit_activity(f"History dedup filtered {hist_skipped}, remaining {len(ctx.papers)}")
     if hist_skipped:
-        ctx.emit_activity(f"跳过 {hist_skipped} 篇已检索文献，剩余 {len(ctx.papers)} 篇")
         logger.info("History dedup removed %d papers", hist_skipped)
     if not ctx.papers:
         logger.info("All papers already in history")
         return []
 
-    # 3. Retrieval
-    ctx.emit_activity(f"开始获取 {len(ctx.papers)} 篇全文...")
+    ctx.emit_activity(
+        f"Starting full-text retrieval for {len(ctx.papers)} papers "
+        f"(raw {raw_count} / deduped {deduped_count} / blacklist {blacklist_skipped} / history {hist_skipped})"
+    )
     ctx = await RetrievalAgent().run_timed(ctx)
     _notify("retrieval")
 
-    # 4. Quality filter
-    ctx.emit_activity(f"正在评估 {len(ctx.papers_with_text)} 篇文献质量...")
+    ctx.emit_activity(f"Scoring quality for {len(ctx.papers_with_text)} papers...")
     ctx = await QualityFilterAgent().run_timed(ctx)
     _notify("quality_filter")
-    ctx.emit_activity(f"质量筛选完成：{len(ctx.passed_papers)} 篇通过，{len(ctx.failed_papers)} 篇未通过")
+    ctx.emit_activity(
+        f"Quality filter complete: passed {len(ctx.passed_papers)}, failed {len(ctx.failed_papers)}"
+    )
 
-    # 4b. Retry loop for failed papers
-    for attempt in range(max_retries):
+    for _attempt in range(max_retries):
         if not ctx.failed_papers:
             break
         ctx.retry_count += 1
-        ctx.emit_activity(f"重试第 {ctx.retry_count} 轮：重新获取 {len(ctx.failed_papers)} 篇...")
+        ctx.emit_activity(
+            f"Retry retrieval [{ctx.retry_count}]: refetching {len(ctx.failed_papers)} papers that failed quality screening"
+        )
         logger.info("Retry %d: re-fetching %d failed papers", ctx.retry_count, len(ctx.failed_papers))
         ctx = await RetrievalAgent().run_timed(ctx)
+        _notify("retrieval")
         ctx = await QualityFilterAgent().run_timed(ctx)
         _notify("quality_filter")
 
-    # 4c. Optional pause for preview
     if pause_after_filter:
         should_continue = pause_after_filter(ctx)
         if not should_continue:
             logger.info("Pipeline paused by user after quality filter")
             return []
 
-    # 5. Extraction
     n = len(ctx.passed_papers)
     if mode == "multi":
-        ctx.emit_activity(f"启动 4 个子智能体并行提取 {n} 篇...")
+        ctx.emit_activity(f"Launching 4 sub-agents to extract {n} papers...")
         ctx = await _run_sub_agents_parallel(ctx)
         _notify("extraction_sub_agents")
-        ctx.emit_activity("正在合并提取结果...")
+        ctx.emit_activity("Merging extraction results...")
         _merge_sub_results(ctx)
         _notify("extraction_merge")
     else:
-        ctx.emit_activity(f"开始统一提取 {n} 篇...")
+        ctx.emit_activity(f"Running unified extraction for {n} papers...")
         ctx = await ExtractionAgent().run_timed(ctx)
         _notify("extraction")
 
-    # 5b. PubChem enrichment
     try:
         await _enrich_with_pubchem(ctx.rows, on_activity=on_activity)
-    except Exception as e:
-        logger.warning("PubChem enrichment failed: %s", e)
+    except Exception as exc:
+        logger.warning("PubChem enrichment failed: %s", exc)
 
-    # 6. Review
-    ctx.emit_activity(f"正在审查 {len(ctx.rows)} 条提取结果...")
+    ctx.emit_activity(f"Reviewing {len(ctx.rows)} extracted rows...")
     ctx = await ReviewerAgent().run_timed(ctx)
     _notify("reviewer")
 
-    # 6b. Reviewer-driven retry for suspicious rows
     if ctx._retry_queue and ctx.retry_count < max_retries + 1:
-        ctx.emit_activity(f"审查发现 {len(ctx._retry_queue)} 条可疑数据，正在重新提取...")
+        ctx.emit_activity(f"Reviewer flagged {len(ctx._retry_queue)} suspicious rows, retrying extraction...")
         logger.info("Reviewer retry: re-extracting %d suspicious papers", len(ctx._retry_queue))
         retry_ctx = PipelineContext(
             query=ctx.query,
@@ -315,16 +299,17 @@ async def run_pipeline(
         else:
             retry_ctx = await ExtractionAgent().run_timed(retry_ctx)
 
-        retry_ctx.rows = retry_ctx.rows
         retry_ctx = await ReviewerAgent().run_timed(retry_ctx)
 
-        retry_dois = {r.get("source_doi") for r in retry_ctx.reviewed_rows if r.get("source_doi")}
-        kept = [r for r in ctx.reviewed_rows if r.get("source_doi") not in retry_dois]
+        retry_dois = {row.get("source_doi") for row in retry_ctx.reviewed_rows if row.get("source_doi")}
+        kept = [row for row in ctx.reviewed_rows if row.get("source_doi") not in retry_dois]
         ctx.reviewed_rows = kept + retry_ctx.reviewed_rows
         _notify("reviewer_retry")
 
     logger.info(
         "Pipeline complete (%s mode): %d reviewed rows, %d logs",
-        mode, len(ctx.reviewed_rows), len(ctx.logs),
+        mode,
+        len(ctx.reviewed_rows),
+        len(ctx.logs),
     )
     return ctx.reviewed_rows

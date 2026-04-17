@@ -451,6 +451,67 @@ def _search_single_db(db_name: str, query: str, limit: int) -> list[dict]:
     return []
 
 
+def search_papers_with_stats(
+    query: str,
+    limit: int | None = None,
+    databases: list[str] | None = None,
+    on_db_done: Callable[[str, int], None] | None = None,
+) -> tuple[list[dict], dict]:
+    """Search papers across databases and return both results and aggregation stats."""
+    limit = limit or config.MAX_RESULTS
+    databases = databases or config.DEFAULT_DATABASES
+
+    n_dbs = max(len(databases), 1)
+    per_db_limit = max(int(limit / n_dbs * 1.5) + 1, limit) if n_dbs <= 2 else max(int(limit / n_dbs * 1.5) + 1, 10)
+
+    all_results: list[dict] = []
+    db_counts: dict[str, int] = {}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(databases)) as executor:
+        future_to_db = {
+            executor.submit(_search_single_db, db_name, query, per_db_limit): db_name
+            for db_name in databases
+        }
+        for future in concurrent.futures.as_completed(future_to_db):
+            db_name = future_to_db[future]
+            try:
+                results = future.result(timeout=_SEARCH_TIMEOUT_PER_DB)
+                count = len(results) if results else 0
+                db_counts[db_name] = count
+                if results:
+                    all_results.extend(results)
+                if on_db_done:
+                    on_db_done(db_name, count)
+            except concurrent.futures.TimeoutError:
+                db_counts[db_name] = 0
+                logger.warning("%s search timed out after %ds, skipping", db_name, _SEARCH_TIMEOUT_PER_DB)
+            except Exception as e:
+                db_counts[db_name] = 0
+                logger.warning("%s search failed: %s", db_name, e)
+
+    deduped = _merge_and_deduplicate(all_results)
+    limited = deduped[:limit]
+    stats = {
+        "requested_limit": limit,
+        "per_db_limit": per_db_limit,
+        "db_counts": db_counts,
+        "raw_count": len(all_results),
+        "deduped_count": len(deduped),
+        "returned_count": len(limited),
+        "database_count": len(databases),
+    }
+    logger.info(
+        "Search stats: requested_limit=%d per_db_limit=%d raw=%d deduped=%d returned=%d db_counts=%s",
+        limit,
+        per_db_limit,
+        stats["raw_count"],
+        stats["deduped_count"],
+        stats["returned_count"],
+        db_counts,
+    )
+    return limited, stats
+
+
 _SEARCH_TIMEOUT_PER_DB = 120
 
 
@@ -470,32 +531,10 @@ def search_papers(
     to avoid over-fetching when many DBs are selected. A per-DB timeout
     of 120s prevents slow sources from blocking the pipeline.
     """
-    limit = limit or config.MAX_RESULTS
-    databases = databases or config.DEFAULT_DATABASES
-
-    n_dbs = max(len(databases), 1)
-    per_db_limit = max(int(limit / n_dbs * 1.5) + 1, limit) if n_dbs <= 2 else max(int(limit / n_dbs * 1.5) + 1, 10)
-
-    all_results: list[dict] = []
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(databases)) as executor:
-        future_to_db = {
-            executor.submit(_search_single_db, db_name, query, per_db_limit): db_name
-            for db_name in databases
-        }
-        for future in concurrent.futures.as_completed(future_to_db):
-            db_name = future_to_db[future]
-            try:
-                results = future.result(timeout=_SEARCH_TIMEOUT_PER_DB)
-                if results:
-                    all_results.extend(results)
-                if on_db_done:
-                    on_db_done(db_name, len(results) if results else 0)
-            except concurrent.futures.TimeoutError:
-                logger.warning("%s search timed out after %ds, skipping", db_name, _SEARCH_TIMEOUT_PER_DB)
-            except Exception as e:
-                logger.warning("%s search failed: %s", db_name, e)
-
-    deduped = _merge_and_deduplicate(all_results)
-    logger.info("Total after dedup: %d papers (from %d raw, per-db limit=%d)", len(deduped), len(all_results), per_db_limit)
-    return deduped[:limit]
+    results, _stats = search_papers_with_stats(
+        query=query,
+        limit=limit,
+        databases=databases,
+        on_db_done=on_db_done,
+    )
+    return results

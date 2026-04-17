@@ -10,7 +10,8 @@ class RetrievalAgent(BaseAgent):
     name = "RetrievalAgent"
 
     async def run(self, ctx: PipelineContext) -> PipelineContext:
-        targets = ctx.failed_papers if ctx.failed_papers and ctx.retry_count > 0 else ctx.papers
+        is_retry = bool(ctx.failed_papers and ctx.retry_count > 0)
+        targets = ctx.failed_papers if is_retry else ctx.papers
         if not targets:
             self._log(ctx, "no papers to fetch")
             return ctx
@@ -41,5 +42,6 @@ class RetrievalAgent(BaseAgent):
             src = p.get("text_source", "unknown")
             source_counts[src] = source_counts.get(src, 0) + 1
 
-        self._log(ctx, f"fetched text for {fetched}/{total} papers, sources: {source_counts}")
+        phase = "retry_retrieval" if is_retry else "retrieval"
+        self._log(ctx, f"{phase}: fetched text for {fetched}/{total} papers, sources: {source_counts}")
         return ctx

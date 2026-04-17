@@ -23,6 +23,7 @@ class PipelineContext:
 
     # Populated by SearchAgent
     papers: list[dict] = field(default_factory=list)
+    _search_stats: dict[str, Any] = field(default_factory=dict)
 
     # Populated by RetrievalAgent
     papers_with_text: list[dict] = field(default_factory=list)

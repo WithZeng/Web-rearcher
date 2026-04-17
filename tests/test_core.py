@@ -49,6 +49,35 @@ def test_merge_and_deduplicate_no_key():
     assert len(result) == 1
 
 
+def test_search_papers_with_stats_reports_counts():
+    from lit_researcher import search as search_module
+
+    def fake_db_a(_query: str, _limit: int) -> list[dict]:
+        return [
+            {"paper_id": "a1", "title": "Paper A", "doi": "10.1/a"},
+            {"paper_id": "a2", "title": "Paper B", "doi": "10.1/b"},
+        ]
+
+    def fake_db_b(_query: str, _limit: int) -> list[dict]:
+        return [
+            {"paper_id": "b1", "title": "Paper A duplicate", "doi": "10.1/a"},
+            {"paper_id": "b2", "title": "Paper C", "doi": "10.1/c"},
+        ]
+
+    with patch.dict(search_module._SEARCHER_REGISTRY, {"DBA": fake_db_a, "DBB": fake_db_b}, clear=True):
+        results, stats = search_module.search_papers_with_stats(
+            query="test",
+            limit=5,
+            databases=["DBA", "DBB"],
+        )
+
+    assert len(results) == 3
+    assert stats["raw_count"] == 4
+    assert stats["deduped_count"] == 3
+    assert stats["returned_count"] == 3
+    assert stats["db_counts"] == {"DBA": 2, "DBB": 2}
+
+
 # ── fetch.py tests ───────────────────────────────────────────────────────────
 
 
