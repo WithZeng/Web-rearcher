@@ -4,6 +4,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from api.ws.pipeline import start_pipeline_task, start_doi_task, start_pdf_task, get_task, cancel_task
+from lit_researcher.pdf_import import list_server_pdfs, load_server_pdf_inputs
 
 router = APIRouter()
 
@@ -31,12 +32,38 @@ class DOIImportRequest(BaseModel):
     llm_concurrency: int | None = None
 
 
+class ServerPdfEntryResponse(BaseModel):
+    path: str
+    name: str
+    size: int
+    modified_at: str
+
+
+class ServerPdfImportRequest(BaseModel):
+    paths: list[str]
+    mode: str = "multi"
+    llm_concurrency: int | None = None
+
+
 class TaskStatusResponse(BaseModel):
     task_id: str
     done: bool
     error: str | None = None
     result_count: int | None = None
     messages: list[dict] = Field(default_factory=list)
+
+
+@router.get("/server-pdfs", response_model=list[ServerPdfEntryResponse])
+async def pipeline_server_pdfs():
+    return [
+        ServerPdfEntryResponse(
+            path=entry.path,
+            name=entry.name,
+            size=entry.size,
+            modified_at=entry.modified_at,
+        )
+        for entry in list_server_pdfs()
+    ]
 
 
 @router.post("/run", response_model=PipelineRunResponse)
@@ -95,6 +122,31 @@ async def pipeline_pdf(
             files=uploaded_files,
             mode=mode,
             llm_concurrency=llm_concurrency,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+    return PipelineRunResponse(task_id=task_id)
+
+
+@router.post("/pdf-server", response_model=PipelineRunResponse)
+async def pipeline_pdf_server(req: ServerPdfImportRequest):
+    if not req.paths:
+        raise HTTPException(status_code=400, detail="no server pdfs selected")
+
+    try:
+        server_files = load_server_pdf_inputs(req.paths)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"server pdf not found: {exc.args[0]}") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"failed to read server pdf: {exc}") from exc
+
+    try:
+        task_id = start_pdf_task(
+            files=server_files,
+            mode=req.mode,
+            llm_concurrency=req.llm_concurrency,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=429, detail=str(e))

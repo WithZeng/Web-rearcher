@@ -60,6 +60,16 @@ export const api = {
         body: formData,
       });
     },
+    listServerPdfs: () => request<ServerPdfEntry[]>('/api/pipeline/server-pdfs'),
+    serverPdf: (paths: string[], params: PdfParams) =>
+      request<{ task_id: string }>('/api/pipeline/pdf-server', {
+        method: 'POST',
+        body: JSON.stringify({
+          paths,
+          mode: params.mode,
+          llm_concurrency: params.llm_concurrency,
+        }),
+      }),
     cancel: (taskId: string) =>
       request<{ task_id: string; cancelled: boolean }>(
         `/api/pipeline/cancel/${taskId}`,
@@ -280,6 +290,13 @@ export interface DoiParams {
 export interface PdfParams {
   mode: string;
   llm_concurrency: number;
+}
+
+export interface ServerPdfEntry {
+  path: string;
+  name: string;
+  size: number;
+  modified_at: string;
 }
 
 export interface MetaResponse {

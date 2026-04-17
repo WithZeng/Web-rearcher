@@ -7,11 +7,23 @@ import hashlib
 import io
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from pypdf import PdfReader
 
+from . import config
 from .fetch import _extract_pdf_text, _is_valid_pdf
+
+
+@dataclass(frozen=True)
+class ServerPdfEntry:
+    path: str
+    name: str
+    size: int
+    modified_at: str
 
 
 def _title_from_filename(filename: str) -> str:
@@ -19,6 +31,54 @@ def _title_from_filename(filename: str) -> str:
     cleaned = re.sub(r"[_-]+", " ", stem)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned or filename or "Untitled PDF"
+
+
+def _pdf_root() -> Path:
+    return config.PDF_CACHE_DIR.resolve()
+
+
+def _resolve_server_pdf(relative_path: str) -> Path:
+    root = _pdf_root()
+    normalized = (relative_path or "").strip().replace("\\", "/")
+    if not normalized:
+        raise ValueError("PDF path is required")
+    if normalized.startswith("/") or normalized.startswith("..") or "/../" in f"/{normalized}/":
+        raise ValueError("Invalid PDF path")
+
+    candidate = (root / normalized).resolve()
+    if candidate.suffix.lower() != ".pdf":
+        raise ValueError("Only PDF files are supported")
+    if root != candidate and root not in candidate.parents:
+        raise ValueError("PDF path escapes the allowed directory")
+    if not candidate.exists():
+        raise FileNotFoundError(normalized)
+    if not candidate.is_file():
+        raise ValueError("Selected path is not a file")
+    return candidate
+
+
+def list_server_pdfs() -> list[ServerPdfEntry]:
+    root = _pdf_root()
+    entries: list[ServerPdfEntry] = []
+    for path in sorted(root.rglob("*.pdf"), key=lambda item: item.stat().st_mtime, reverse=True):
+        stat = path.stat()
+        entries.append(
+            ServerPdfEntry(
+                path=path.relative_to(root).as_posix(),
+                name=path.name,
+                size=stat.st_size,
+                modified_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+            )
+        )
+    return entries
+
+
+def load_server_pdf_inputs(paths: list[str]) -> list[tuple[str, bytes]]:
+    files: list[tuple[str, bytes]] = []
+    for rel_path in paths:
+        resolved = _resolve_server_pdf(rel_path)
+        files.append((resolved.name, resolved.read_bytes()))
+    return files
 
 
 def _extract_single_pdf(file_name: str, pdf_bytes: bytes) -> dict[str, Any]:
