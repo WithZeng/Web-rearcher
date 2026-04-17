@@ -5,7 +5,28 @@
 - 前端：`3000`
 - 后端：`8000`
 
-## 一键部署
+## 一键拉取并部署
+
+从空服务器直接拉取 GitHub 仓库并部署：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/WithZeng/Web-rearcher/codex/server-compose-grobid/scripts/bootstrap-install.sh | sudo bash
+```
+
+可选环境变量：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/WithZeng/Web-rearcher/codex/server-compose-grobid/scripts/bootstrap-install.sh | \
+sudo REPO_BRANCH=codex/server-compose-grobid INSTALL_DIR=/opt/web-rearcher bash
+```
+
+默认行为：
+
+- 仓库地址：`https://github.com/WithZeng/Web-rearcher.git`
+- 分支：`codex/server-compose-grobid`
+- 安装目录：`/opt/web-rearcher`
+
+## 仓库已存在时的一键部署
 
 仓库已经在服务器上的前提下，直接执行：
 
@@ -13,7 +34,13 @@
 sudo bash scripts/server-deploy.sh
 ```
 
-脚本会自动完成：
+bootstrap 脚本会自动完成：
+
+- 安装 `git` 和 `curl`
+- 克隆或更新 GitHub 仓库到目标目录
+- 调用仓库内的 `scripts/server-deploy.sh`
+
+仓库内部署脚本会自动完成：
 
 - 安装 Docker Engine 与 Docker Compose Plugin
 - 创建缺失的 `.env`、`models.json`、`output/`

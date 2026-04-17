@@ -48,7 +48,13 @@ http://127.0.0.1:3000
 - Windows 本地部署说明见 [WINDOWS_DEPLOY.md](./WINDOWS_DEPLOY.md)
 - Ubuntu/Debian 服务器部署说明见 [UBUNTU_SERVER_DEPLOY.md](./UBUNTU_SERVER_DEPLOY.md)
 
-服务器版一键部署命令：
+服务器版一键拉取并部署命令：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/WithZeng/Web-rearcher/codex/server-compose-grobid/scripts/bootstrap-install.sh | sudo bash
+```
+
+如果仓库已经在服务器上，也可以直接在仓库目录执行：
 
 ```bash
 sudo bash scripts/server-deploy.sh
