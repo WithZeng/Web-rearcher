@@ -34,6 +34,11 @@ export function connectPipeline(
           progress: raw.progress,
           message: raw.detail ?? raw.label,
           searchStats: raw.search_stats,
+          roundNumber: raw.round_number,
+          passedCount: raw.passed_count,
+          targetPassedCount: raw.target_passed_count,
+          stopReason: raw.stop_reason,
+          retryCount: raw.retry_count,
           data: {
             papers_found: raw.papers_found,
             papers_passed: raw.papers_passed,

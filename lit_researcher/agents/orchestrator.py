@@ -121,6 +121,34 @@ async def _enrich_with_pubchem(rows: list[dict], on_activity: Callable[[str], An
             on_activity(f"PubChem filled {total_filled} fields")
 
 
+def _normalize_paper_signature(paper: dict) -> str:
+    doi = str(paper.get("doi") or paper.get("source_doi") or "").strip().lower()
+    for prefix in ("https://doi.org/", "http://doi.org/", "doi.org/", "doi:"):
+        if doi.startswith(prefix):
+            doi = doi[len(prefix):]
+    if doi:
+        return f"doi:{doi.strip('/')}"
+
+    title = str(paper.get("title") or paper.get("source_title") or "").strip().lower()[:120]
+    if title:
+        return f"title:{title}"
+
+    return f"id:{paper.get('paper_id') or id(paper)}"
+
+
+def _extend_unique_papers(target: list[dict], incoming: list[dict]) -> int:
+    seen = {_normalize_paper_signature(paper) for paper in target}
+    added = 0
+    for paper in incoming:
+        sig = _normalize_paper_signature(paper)
+        if sig in seen:
+            continue
+        seen.add(sig)
+        target.append(paper)
+        added += 1
+    return added
+
+
 async def _run_sub_agents_parallel(ctx: PipelineContext) -> PipelineContext:
     """Run all 4 sub-extraction agents concurrently."""
     import asyncio
@@ -148,6 +176,7 @@ async def _run_sub_agents_parallel(ctx: PipelineContext) -> PipelineContext:
 async def run_pipeline(
     query: str,
     limit: int | None = None,
+    target_passed_count: int | None = None,
     databases: list[str] | None = None,
     fetch_concurrency: int | None = None,
     llm_concurrency: int | None = None,
@@ -161,12 +190,16 @@ async def run_pipeline(
     cancel_check: Callable[[], None] | None = None,
 ) -> list[dict]:
     """Run the full pipeline and return reviewed rows."""
+    max_unique_candidates = limit or config.MAX_RESULTS
     ctx = PipelineContext(
         query=query,
-        limit=limit or config.MAX_RESULTS,
+        limit=max_unique_candidates,
         databases=databases or list(config.DEFAULT_DATABASES),
         fetch_concurrency=fetch_concurrency or config.FETCH_CONCURRENCY,
         llm_concurrency=llm_concurrency or config.LLM_CONCURRENCY,
+        target_passed_count=target_passed_count,
+        max_unique_candidates=max_unique_candidates,
+        rolling_mode=bool(target_passed_count),
         mode=mode,
         _on_activity=on_activity,
         _cancel_check=cancel_check,
@@ -183,74 +216,238 @@ async def run_pipeline(
         _notify("planner")
 
     db_names = ", ".join(ctx.databases)
-    ctx.emit_activity(f"Searching {db_names}...")
-    ctx = await SearchAgent().run_timed(ctx)
-    _notify("search")
-    if not ctx.papers:
-        logger.warning("No papers found for query: %s", query)
-        return []
+    if ctx.rolling_mode:
+        ctx.emit_activity(
+            f"Rolling recall enabled: searching {db_names} until {ctx.target_passed_count} high-quality papers "
+            f"or {ctx.max_unique_candidates} unique candidates"
+        )
 
-    search_stats = ctx._search_stats or {}
-    raw_count = int(search_stats.get("raw_count") or len(ctx.papers))
-    deduped_count = int(search_stats.get("deduped_count") or len(ctx.papers))
-    db_counts = search_stats.get("db_counts") or {}
-    if db_counts:
-        parts = [f"{db}:{count}" for db, count in db_counts.items()]
-        ctx.emit_activity(f"Search complete: raw {raw_count}, deduped {deduped_count}, per-db {', '.join(parts)}")
-    else:
-        ctx.emit_activity(f"Search complete: raw {raw_count}, deduped {deduped_count}")
+        while True:
+            ctx.search_round += 1
+            ctx.round_number = ctx.search_round
+            remaining_target = max((ctx.target_passed_count or 0) - len(ctx.accumulated_passed_papers), 0)
+            remaining_capacity = max((ctx.max_unique_candidates or ctx.limit) - len(ctx.candidate_pool), 0)
+            if remaining_capacity <= 0:
+                ctx.stop_reason = "max_unique_candidates"
+                break
 
-    if resume:
-        ctx.papers = filter_unprocessed(ctx.papers)
-        if not ctx.papers:
-            logger.info("Resume: all papers already processed")
+            ctx.desired_new_candidates = min(
+                remaining_capacity,
+                max(100, min(1000, remaining_target * 3 if remaining_target else 100)),
+            )
+
+            ctx.emit_activity(
+                f"Round {ctx.search_round}: searching {db_names} for ~{ctx.desired_new_candidates} new candidates"
+            )
+            ctx = await SearchAgent().run_timed(ctx)
+            _notify("search")
+
+            round_stats = ctx._search_stats or {}
+            if not ctx.papers:
+                if set(ctx.sources_exhausted) >= set(ctx.databases):
+                    ctx.stop_reason = "sources_exhausted"
+                    break
+                ctx.round_summaries.append({
+                    "round": ctx.search_round,
+                    "raw_count": int(round_stats.get("round_raw_count") or 0),
+                    "deduped_count": 0,
+                    "blacklist_skipped": 0,
+                    "history_skipped": 0,
+                    "passed_count": len(ctx.accumulated_passed_papers),
+                    "failed_count": 0,
+                })
+                continue
+
+            _extend_unique_papers(ctx.candidate_pool, ctx.papers)
+
+            if resume:
+                ctx.papers = filter_unprocessed(ctx.papers)
+                if not ctx.papers:
+                    if set(ctx.sources_exhausted) >= set(ctx.databases):
+                        ctx.stop_reason = "sources_exhausted"
+                        break
+                    continue
+
+            from ..blacklist import filter_blacklisted
+            from ..ui_helpers import filter_history_duplicates
+
+            before_blacklist = len(ctx.papers)
+            ctx.papers = filter_blacklisted(ctx.papers)
+            blacklist_skipped = before_blacklist - len(ctx.papers)
+            ctx.blacklist_skipped += blacklist_skipped
+
+            ctx.papers, hist_skipped = filter_history_duplicates(ctx.papers)
+            ctx.history_skipped += hist_skipped
+
+            ctx.emit_activity(
+                f"Round {ctx.search_round}: raw {round_stats.get('round_raw_count', 0)}, "
+                f"new unique {round_stats.get('round_returned_count', 0)}, "
+                f"blacklist skipped {blacklist_skipped}, history skipped {hist_skipped}, "
+                f"remaining {len(ctx.papers)}"
+            )
+
+            if ctx.papers:
+                ctx.papers_with_text = []
+                ctx.passed_papers = []
+                ctx.failed_papers = []
+                ctx.retry_count = 0
+
+                ctx.retrieval_round += 1
+                ctx.round_number = ctx.retrieval_round
+                ctx.emit_activity(f"Round {ctx.search_round}: first-pass retrieval for {len(ctx.papers)} papers")
+                ctx = await RetrievalAgent().run_timed(ctx)
+                _notify("retrieval")
+
+                ctx.quality_filter_round += 1
+                ctx.round_number = ctx.quality_filter_round
+                ctx = await QualityFilterAgent().run_timed(ctx)
+                ctx.passed_count = len(ctx.accumulated_passed_papers) + len(ctx.passed_papers)
+                _notify("quality_filter")
+
+                for _attempt in range(max_retries):
+                    if not ctx.failed_papers:
+                        break
+                    ctx.retry_count += 1
+                    ctx.retry_retrieval_round += 1
+                    ctx.round_number = ctx.retry_retrieval_round
+                    ctx.emit_activity(
+                        f"Round {ctx.search_round}: retry retrieval {ctx.retry_count} for {len(ctx.failed_papers)} failed papers"
+                    )
+                    logger.info(
+                        "Round %d retry retrieval %d: re-fetching %d failed papers",
+                        ctx.search_round,
+                        ctx.retry_count,
+                        len(ctx.failed_papers),
+                    )
+                    ctx = await RetrievalAgent().run_timed(ctx)
+                    _notify("retrieval")
+                    ctx.quality_filter_round += 1
+                    ctx.round_number = ctx.quality_filter_round
+                    ctx = await QualityFilterAgent().run_timed(ctx)
+                    ctx.passed_count = len(ctx.accumulated_passed_papers) + len(ctx.passed_papers)
+                    _notify("quality_filter")
+
+                added_passed = _extend_unique_papers(ctx.accumulated_passed_papers, ctx.passed_papers)
+                _extend_unique_papers(ctx.accumulated_failed_papers, ctx.failed_papers)
+                ctx.passed_count = len(ctx.accumulated_passed_papers)
+            else:
+                added_passed = 0
+
+            ctx.round_summaries.append({
+                "round": ctx.search_round,
+                "raw_count": int(round_stats.get("round_raw_count") or 0),
+                "deduped_count": int(round_stats.get("round_returned_count") or 0),
+                "blacklist_skipped": blacklist_skipped,
+                "history_skipped": hist_skipped,
+                "passed_count": len(ctx.accumulated_passed_papers),
+                "added_passed": added_passed,
+                "failed_count": len(ctx.failed_papers),
+            })
+
+            if ctx.target_passed_count and len(ctx.accumulated_passed_papers) >= ctx.target_passed_count:
+                ctx.stop_reason = "target_passed_count_reached"
+                break
+            if len(ctx.candidate_pool) >= (ctx.max_unique_candidates or ctx.limit):
+                ctx.stop_reason = "max_unique_candidates"
+                break
+            if set(ctx.sources_exhausted) >= set(ctx.databases):
+                ctx.stop_reason = "sources_exhausted"
+                break
+
+        if not ctx.accumulated_passed_papers:
+            logger.warning("No high-quality papers collected for query: %s", query)
             return []
 
-    from ..blacklist import filter_blacklisted
-
-    before_blacklist = len(ctx.papers)
-    ctx.papers = filter_blacklisted(ctx.papers)
-    blacklist_skipped = before_blacklist - len(ctx.papers)
-    ctx.emit_activity(f"Blacklist filtered {blacklist_skipped}, remaining {len(ctx.papers)}")
-    if blacklist_skipped:
-        logger.info("Blacklist removed %d papers", blacklist_skipped)
-
-    from ..ui_helpers import filter_history_duplicates
-
-    ctx.papers, hist_skipped = filter_history_duplicates(ctx.papers)
-    ctx.emit_activity(f"History dedup filtered {hist_skipped}, remaining {len(ctx.papers)}")
-    if hist_skipped:
-        logger.info("History dedup removed %d papers", hist_skipped)
-    if not ctx.papers:
-        logger.info("All papers already in history")
-        return []
-
-    ctx.emit_activity(
-        f"Starting full-text retrieval for {len(ctx.papers)} papers "
-        f"(raw {raw_count} / deduped {deduped_count} / blacklist {blacklist_skipped} / history {hist_skipped})"
-    )
-    ctx = await RetrievalAgent().run_timed(ctx)
-    _notify("retrieval")
-
-    ctx.emit_activity(f"Scoring quality for {len(ctx.papers_with_text)} papers...")
-    ctx = await QualityFilterAgent().run_timed(ctx)
-    _notify("quality_filter")
-    ctx.emit_activity(
-        f"Quality filter complete: passed {len(ctx.passed_papers)}, failed {len(ctx.failed_papers)}"
-    )
-
-    for _attempt in range(max_retries):
-        if not ctx.failed_papers:
-            break
-        ctx.retry_count += 1
+        final_stats = dict(ctx._search_stats or {})
+        final_stats.update({
+            "raw_count": int(final_stats.get("raw_count") or 0),
+            "deduped_count": len(ctx.candidate_pool),
+            "returned_count": len(ctx.accumulated_passed_papers),
+            "blacklist_skipped": ctx.blacklist_skipped,
+            "history_skipped": ctx.history_skipped,
+            "target_passed_count": ctx.target_passed_count,
+            "final_passed_count": len(ctx.accumulated_passed_papers),
+            "rounds_completed": ctx.search_round,
+            "exhausted_sources": sorted(ctx.sources_exhausted),
+            "stop_reason": ctx.stop_reason,
+        })
+        ctx._search_stats = final_stats
+        ctx.passed_papers = list(ctx.accumulated_passed_papers)
+        ctx.failed_papers = list(ctx.accumulated_failed_papers)
         ctx.emit_activity(
-            f"Retry retrieval [{ctx.retry_count}]: refetching {len(ctx.failed_papers)} papers that failed quality screening"
+            f"Rolling recall finished: {len(ctx.accumulated_passed_papers)}/{ctx.target_passed_count} passed, "
+            f"{len(ctx.candidate_pool)} unique candidates, stop={ctx.stop_reason}"
         )
-        logger.info("Retry %d: re-fetching %d failed papers", ctx.retry_count, len(ctx.failed_papers))
+    else:
+        ctx.emit_activity(f"Searching {db_names}...")
+        ctx = await SearchAgent().run_timed(ctx)
+        _notify("search")
+        if not ctx.papers:
+            logger.warning("No papers found for query: %s", query)
+            return []
+
+        search_stats = ctx._search_stats or {}
+        raw_count = int(search_stats.get("raw_count") or len(ctx.papers))
+        deduped_count = int(search_stats.get("deduped_count") or len(ctx.papers))
+        db_counts = search_stats.get("db_counts") or {}
+        if db_counts:
+            parts = [f"{db}:{count}" for db, count in db_counts.items()]
+            ctx.emit_activity(f"Search complete: raw {raw_count}, deduped {deduped_count}, per-db {', '.join(parts)}")
+        else:
+            ctx.emit_activity(f"Search complete: raw {raw_count}, deduped {deduped_count}")
+
+        if resume:
+            ctx.papers = filter_unprocessed(ctx.papers)
+            if not ctx.papers:
+                logger.info("Resume: all papers already processed")
+                return []
+
+        from ..blacklist import filter_blacklisted
+        from ..ui_helpers import filter_history_duplicates
+
+        before_blacklist = len(ctx.papers)
+        ctx.papers = filter_blacklisted(ctx.papers)
+        blacklist_skipped = before_blacklist - len(ctx.papers)
+        ctx.blacklist_skipped = blacklist_skipped
+        ctx.emit_activity(f"Blacklist filtered {blacklist_skipped}, remaining {len(ctx.papers)}")
+        if blacklist_skipped:
+            logger.info("Blacklist removed %d papers", blacklist_skipped)
+
+        ctx.papers, hist_skipped = filter_history_duplicates(ctx.papers)
+        ctx.history_skipped = hist_skipped
+        ctx.emit_activity(f"History dedup filtered {hist_skipped}, remaining {len(ctx.papers)}")
+        if hist_skipped:
+            logger.info("History dedup removed %d papers", hist_skipped)
+        if not ctx.papers:
+            logger.info("All papers already in history")
+            return []
+
+        ctx.emit_activity(
+            f"Starting full-text retrieval for {len(ctx.papers)} papers "
+            f"(raw {raw_count} / deduped {deduped_count} / blacklist {blacklist_skipped} / history {hist_skipped})"
+        )
         ctx = await RetrievalAgent().run_timed(ctx)
         _notify("retrieval")
+
+        ctx.emit_activity(f"Scoring quality for {len(ctx.papers_with_text)} papers...")
         ctx = await QualityFilterAgent().run_timed(ctx)
         _notify("quality_filter")
+        ctx.emit_activity(
+            f"Quality filter complete: passed {len(ctx.passed_papers)}, failed {len(ctx.failed_papers)}"
+        )
+
+        for _attempt in range(max_retries):
+            if not ctx.failed_papers:
+                break
+            ctx.retry_count += 1
+            ctx.emit_activity(
+                f"Retry retrieval [{ctx.retry_count}]: refetching {len(ctx.failed_papers)} papers that failed quality screening"
+            )
+            logger.info("Retry %d: re-fetching %d failed papers", ctx.retry_count, len(ctx.failed_papers))
+            ctx = await RetrievalAgent().run_timed(ctx)
+            _notify("retrieval")
+            ctx = await QualityFilterAgent().run_timed(ctx)
+            _notify("quality_filter")
 
     if pause_after_filter:
         should_continue = pause_after_filter(ctx)
@@ -260,22 +457,27 @@ async def run_pipeline(
 
     n = len(ctx.passed_papers)
     if mode == "multi":
+        stage_name = "extraction_sub_agents"
+        ctx.round_number = ctx.search_round if ctx.rolling_mode else 0
         ctx.emit_activity(f"Launching 4 sub-agents to extract {n} papers...")
         ctx = await _run_sub_agents_parallel(ctx)
-        _notify("extraction_sub_agents")
+        _notify(stage_name)
         ctx.emit_activity("Merging extraction results...")
         _merge_sub_results(ctx)
         _notify("extraction_merge")
     else:
+        stage_name = "extraction"
+        ctx.round_number = ctx.search_round if ctx.rolling_mode else 0
         ctx.emit_activity(f"Running unified extraction for {n} papers...")
         ctx = await ExtractionAgent().run_timed(ctx)
-        _notify("extraction")
+        _notify(stage_name)
 
     try:
         await _enrich_with_pubchem(ctx.rows, on_activity=on_activity)
     except Exception as exc:
         logger.warning("PubChem enrichment failed: %s", exc)
 
+    ctx.round_number = ctx.search_round if ctx.rolling_mode else 0
     ctx.emit_activity(f"Reviewing {len(ctx.rows)} extracted rows...")
     ctx = await ReviewerAgent().run_timed(ctx)
     _notify("reviewer")

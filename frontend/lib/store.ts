@@ -28,6 +28,7 @@ export interface SearchParams {
   query: string;
   selectedDbs: string[];
   limit: number;
+  targetPassedCount: number | null;
   mode: 'multi' | 'single';
   usePlanner: boolean;
   fetchConcurrency: number;
@@ -64,6 +65,7 @@ const defaultSearchParams: SearchParams = {
   query: '',
   selectedDbs: [],
   limit: 50,
+  targetPassedCount: null,
   mode: 'multi',
   usePlanner: true,
   fetchConcurrency: 15,
@@ -251,9 +253,18 @@ export const useAppStore = create<AppStore>()(
             ...state.pipeline,
             progress: msg.progress ?? state.pipeline.progress,
             currentStage: msg.stage ?? state.pipeline.currentStage,
-            stageMessage: msg.searchStats
-              ? `${msg.message ?? state.pipeline.stageMessage} · 原始 ${msg.searchStats.raw_count} / 去重 ${msg.searchStats.deduped_count} / 进入处理 ${msg.searchStats.returned_count}`
-              : msg.message ?? state.pipeline.stageMessage,
+            stageMessage: [
+              msg.message ?? state.pipeline.stageMessage,
+              msg.roundNumber ? `Round ${msg.roundNumber}` : '',
+              msg.searchStats
+                ? `raw ${msg.searchStats.raw_count} / deduped ${msg.searchStats.deduped_count} / candidates ${msg.searchStats.returned_count}`
+                : '',
+              typeof msg.passedCount === 'number'
+                ? `passed ${msg.passedCount}${msg.targetPassedCount ? `/${msg.targetPassedCount}` : ''}`
+                : '',
+              msg.retryCount ? `retry ${msg.retryCount}` : '',
+              msg.stopReason ? `stop ${msg.stopReason}` : '',
+            ].filter(Boolean).join(' · '),
             stageData: {
               ...state.pipeline.stageData,
               ...data,

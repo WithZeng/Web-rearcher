@@ -28,6 +28,7 @@ class HistoryStatsResponse(BaseModel):
     total_raw_hits: int
     total_deduped_hits: int
     total_final_rows: int
+    total_final_passed_count: int
     avg_effective_ratio: float
 
 
@@ -40,6 +41,11 @@ class SearchMetadataResponse(BaseModel):
     db_counts: dict[str, int] | None = None
     blacklist_skipped: int | None = None
     history_skipped: int | None = None
+    target_passed_count: int | None = None
+    final_passed_count: int | None = None
+    rounds_completed: int | None = None
+    exhausted_sources: list[str] | None = None
+    stop_reason: str | None = None
 
 
 class HistoryTaskResponse(BaseModel):

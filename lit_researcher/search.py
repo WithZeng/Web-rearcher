@@ -8,6 +8,7 @@ import logging
 import concurrent.futures
 from collections import defaultdict
 from collections.abc import Callable
+from typing import Any
 
 import requests
 import findpapers
@@ -124,6 +125,49 @@ def _merge_and_deduplicate(papers: list[dict]) -> list[dict]:
     return unique
 
 
+def _normalize_doi_key(raw: str) -> str:
+    doi = (raw or "").strip().lower()
+    for prefix in ("https://doi.org/", "http://doi.org/", "doi.org/", "doi:"):
+        if doi.startswith(prefix):
+            doi = doi[len(prefix):]
+    return doi.strip().strip("/")
+
+
+def _normalize_title_key(raw: str) -> str:
+    return (raw or "").strip().lower()[:80]
+
+
+def _filter_seen_candidates(
+    papers: list[dict],
+    seen_doi_keys: set[str],
+    seen_title_keys: set[str],
+) -> list[dict]:
+    fresh: list[dict] = []
+    for paper in papers:
+        doi_key = _normalize_doi_key(str(paper.get("doi") or ""))
+        title_key = _normalize_title_key(str(paper.get("title") or ""))
+        if doi_key and doi_key in seen_doi_keys:
+            continue
+        if title_key and title_key in seen_title_keys:
+            continue
+        fresh.append(paper)
+    return fresh
+
+
+def _mark_seen_candidates(
+    papers: list[dict],
+    seen_doi_keys: set[str],
+    seen_title_keys: set[str],
+) -> None:
+    for paper in papers:
+        doi_key = _normalize_doi_key(str(paper.get("doi") or ""))
+        title_key = _normalize_title_key(str(paper.get("title") or ""))
+        if doi_key:
+            seen_doi_keys.add(doi_key)
+        if title_key:
+            seen_title_keys.add(title_key)
+
+
 # ── OpenAlex ─────────────────────────────────────────────────────────────────
 
 
@@ -145,9 +189,29 @@ def _openalex_abstract(item: dict) -> str:
 
 @_register("OpenAlex")
 def _search_openalex(query: str, limit: int) -> list[dict]:
-    from pyalex import Works
+    results_raw, _state = _search_openalex_batch(query, limit, {})
+    return results_raw[:limit]
 
-    results_raw = Works().search(query).get(per_page=min(limit, 200))
+
+def _search_openalex_batch(
+    query: str,
+    batch_size: int,
+    cursor_state: dict[str, Any] | None = None,
+) -> tuple[list[dict], dict[str, Any]]:
+    cursor_state = dict(cursor_state or {})
+    if cursor_state.get("exhausted"):
+        return [], cursor_state
+
+    params = {
+        "search": query,
+        "per-page": min(max(batch_size, 1), 200),
+        "cursor": cursor_state.get("cursor") or "*",
+        "select": "id,display_name,doi,abstract_inverted_index,abstract,open_access,ids",
+    }
+    resp = _get_with_retry("https://api.openalex.org/works", params)
+    payload = resp.json()
+    results_raw = payload.get("results", []) or []
+    next_cursor = (payload.get("meta") or {}).get("next_cursor")
     results = []
     for item in results_raw:
         doi = item.get("doi", "") or ""
@@ -167,14 +231,19 @@ def _search_openalex(query: str, limit: int) -> list[dict]:
 
         results.append({
             "paper_id": item.get("id", "") or doi,
-            "title": item.get("title", "") or "",
+            "title": item.get("display_name", "") or item.get("title", "") or "",
             "doi": doi,
             "abstract": abstract,
             "pdf_url": pdf_url,
             "web_url": item.get("id", "") or (f"https://doi.org/{doi}" if doi else ""),
             "pmcid": pmcid,
         })
-    return results[:limit]
+    next_state = {
+        **cursor_state,
+        "cursor": next_cursor,
+        "exhausted": not results_raw or not next_cursor,
+    }
+    return results, next_state
 
 
 # ── PubMed (via findpapers) ──────────────────────────────────────────────────
@@ -267,11 +336,26 @@ def _search_google_scholar(query: str, limit: int) -> list[dict]:
 
 @_register("CrossRef")
 def _search_crossref(query: str, limit: int) -> list[dict]:
+    results, _state = _search_crossref_batch(query, limit, {})
+    return results[:limit]
+
+
+def _search_crossref_batch(
+    query: str,
+    batch_size: int,
+    cursor_state: dict[str, Any] | None = None,
+) -> tuple[list[dict], dict[str, Any]]:
     import re as _re
 
+    cursor_state = dict(cursor_state or {})
+    if cursor_state.get("exhausted"):
+        return [], cursor_state
+
+    rows = min(max(batch_size, 1), 1000)
     params = {
         "query.bibliographic": query,
-        "rows": min(limit, 1000),
+        "rows": rows,
+        "offset": int(cursor_state.get("offset") or 0),
         "select": "DOI,title,abstract,link",
     }
     resp = _get_with_retry(CROSSREF_API, params)
@@ -303,7 +387,12 @@ def _search_crossref(query: str, limit: int) -> list[dict]:
             "pdf_url": pdf_url,
             "web_url": web_url,
         })
-    return results
+    next_state = {
+        **cursor_state,
+        "offset": int(cursor_state.get("offset") or 0) + len(items),
+        "exhausted": not items or len(items) < rows,
+    }
+    return results, next_state
 
 
 # ── findpapers shared helpers ────────────────────────────────────────────────
@@ -451,6 +540,30 @@ def _search_single_db(db_name: str, query: str, limit: int) -> list[dict]:
     return []
 
 
+def _fetch_rolling_db_batch(
+    db_name: str,
+    query: str,
+    batch_size: int,
+    cursor_state: dict[str, Any] | None,
+    round_number: int,
+) -> tuple[list[dict], dict[str, Any], bool]:
+    cursor_state = dict(cursor_state or {})
+    if db_name == "OpenAlex":
+        results, next_state = _search_openalex_batch(query, batch_size, cursor_state)
+        return results, next_state, bool(next_state.get("exhausted"))
+    if db_name == "CrossRef":
+        results, next_state = _search_crossref_batch(query, batch_size, cursor_state)
+        return results, next_state, bool(next_state.get("exhausted"))
+
+    if round_number > 1 or cursor_state.get("exhausted"):
+        next_state = {**cursor_state, "exhausted": True, "limited": True}
+        return [], next_state, True
+
+    results = _search_single_db(db_name, query, batch_size)
+    next_state = {**cursor_state, "exhausted": True, "limited": True}
+    return results, next_state, True
+
+
 def search_papers_with_stats(
     query: str,
     limit: int | None = None,
@@ -510,6 +623,89 @@ def search_papers_with_stats(
         db_counts,
     )
     return limited, stats
+
+
+def search_papers_rolling_with_stats(
+    query: str,
+    max_unique_candidates: int,
+    databases: list[str] | None = None,
+    *,
+    round_number: int,
+    seen_doi_keys: set[str] | None = None,
+    seen_title_keys: set[str] | None = None,
+    per_db_cursor_state: dict[str, Any] | None = None,
+    current_unique_count: int = 0,
+    desired_new_candidates: int | None = None,
+    on_db_done: Callable[[str, int], None] | None = None,
+) -> tuple[list[dict], dict, dict[str, Any], list[str]]:
+    databases = databases or config.DEFAULT_DATABASES
+    seen_doi_keys = set(seen_doi_keys or set())
+    seen_title_keys = set(seen_title_keys or set())
+    per_db_cursor_state = dict(per_db_cursor_state or {})
+
+    remaining_capacity = max(max_unique_candidates - current_unique_count, 0)
+    if remaining_capacity <= 0:
+        exhausted_sources = sorted(databases)
+        return [], {
+            "round_number": round_number,
+            "db_counts": {db: 0 for db in databases},
+            "raw_count": 0,
+            "deduped_count": 0,
+            "returned_count": 0,
+            "remaining_capacity": 0,
+        }, per_db_cursor_state, exhausted_sources
+
+    desired_new_candidates = desired_new_candidates or min(remaining_capacity, 200)
+    desired_new_candidates = max(1, min(desired_new_candidates, remaining_capacity))
+    n_dbs = max(len(databases), 1)
+    per_db_limit = max(min((desired_new_candidates // n_dbs) + 1, remaining_capacity), 10)
+
+    all_results: list[dict] = []
+    db_counts: dict[str, int] = {}
+    exhausted_sources: list[str] = []
+
+    for db_name in databases:
+        db_state = per_db_cursor_state.get(db_name) or {}
+        results, next_state, exhausted = _fetch_rolling_db_batch(
+            db_name,
+            query,
+            per_db_limit,
+            db_state,
+            round_number,
+        )
+        db_counts[db_name] = len(results)
+        per_db_cursor_state[db_name] = next_state
+        if exhausted:
+            exhausted_sources.append(db_name)
+        if results:
+            all_results.extend(results)
+        if on_db_done:
+            on_db_done(db_name, len(results))
+
+    deduped = _merge_and_deduplicate(all_results)
+    fresh = _filter_seen_candidates(deduped, seen_doi_keys, seen_title_keys)
+    limited = fresh[:remaining_capacity]
+    stats = {
+        "round_number": round_number,
+        "requested_limit": max_unique_candidates,
+        "per_db_limit": per_db_limit,
+        "db_counts": db_counts,
+        "raw_count": len(all_results),
+        "deduped_count": len(limited),
+        "returned_count": len(limited),
+        "database_count": len(databases),
+        "remaining_capacity": remaining_capacity,
+    }
+    logger.info(
+        "Rolling search stats: round=%d raw=%d new_unique=%d remaining_capacity=%d db_counts=%s exhausted=%s",
+        round_number,
+        len(all_results),
+        len(limited),
+        remaining_capacity - len(limited),
+        db_counts,
+        exhausted_sources,
+    )
+    return limited, stats, per_db_cursor_state, exhausted_sources
 
 
 _SEARCH_TIMEOUT_PER_DB = 120

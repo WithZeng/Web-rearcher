@@ -223,3 +223,92 @@ def test_base_agent_logging():
     asyncio.run(TestAgent().run_timed(ctx))
     assert any("TestAgent" in log for log in ctx.logs)
     assert any("hello" in log for log in ctx.logs)
+
+
+def test_run_pipeline_rolling_mode_defers_extraction_until_target(monkeypatch):
+    from lit_researcher.agents import orchestrator as orchestrator_module
+
+    extraction_calls: list[int] = []
+    reviewer_calls: list[int] = []
+
+    async def fake_search(self, ctx):
+        if ctx.search_round == 1:
+            ctx.papers = [
+                {"paper_id": "p1", "title": "Paper 1", "doi": "10.1/a"},
+                {"paper_id": "p2", "title": "Paper 2", "doi": "10.1/b"},
+            ]
+            ctx._search_stats = {
+                "raw_count": 2,
+                "deduped_count": len(ctx.candidate_pool) + len(ctx.papers),
+                "returned_count": len(ctx.candidate_pool) + len(ctx.papers),
+                "round_raw_count": 2,
+                "round_returned_count": 2,
+                "db_counts": {"OpenAlex": 2},
+            }
+            ctx.sources_exhausted = []
+        else:
+            ctx.papers = [
+                {"paper_id": "p3", "title": "Paper 3", "doi": "10.1/c"},
+            ]
+            ctx._search_stats = {
+                "raw_count": 3,
+                "deduped_count": len(ctx.candidate_pool) + len(ctx.papers),
+                "returned_count": len(ctx.candidate_pool) + len(ctx.papers),
+                "round_raw_count": 1,
+                "round_returned_count": 1,
+                "db_counts": {"OpenAlex": 1},
+            }
+            ctx.sources_exhausted = ["OpenAlex"]
+        return ctx
+
+    async def fake_retrieval(self, ctx):
+        targets = ctx.failed_papers if (ctx.failed_papers and ctx.retry_count > 0) else ctx.papers
+        ctx.papers_with_text = [dict(paper, text="full text", text_source="pdf") for paper in targets]
+        return ctx
+
+    async def fake_quality(self, ctx):
+        passed = [dict(paper) for paper in ctx.papers_with_text]
+        ctx.passed_papers = passed
+        ctx.failed_papers = []
+        return ctx
+
+    async def fake_extraction(self, ctx):
+        extraction_calls.append(len(ctx.passed_papers))
+        ctx.rows = [
+            {
+                "paper_id": paper["paper_id"],
+                "source_title": paper["title"],
+                "source_doi": paper["doi"],
+                "drug_name": "drug",
+                "_data_quality": 0.8,
+            }
+            for paper in ctx.passed_papers
+        ]
+        return ctx
+
+    async def fake_reviewer(self, ctx):
+        reviewer_calls.append(len(ctx.rows))
+        ctx.reviewed_rows = list(ctx.rows)
+        return ctx
+
+    monkeypatch.setattr(orchestrator_module.SearchAgent, "run_timed", fake_search)
+    monkeypatch.setattr(orchestrator_module.RetrievalAgent, "run_timed", fake_retrieval)
+    monkeypatch.setattr(orchestrator_module.QualityFilterAgent, "run_timed", fake_quality)
+    monkeypatch.setattr(orchestrator_module.ExtractionAgent, "run_timed", fake_extraction)
+    monkeypatch.setattr(orchestrator_module.ReviewerAgent, "run_timed", fake_reviewer)
+
+    rows = asyncio.run(
+        orchestrator_module.run_pipeline(
+            query="test",
+            limit=10,
+            target_passed_count=3,
+            databases=["OpenAlex"],
+            use_planner=False,
+            max_retries=0,
+            mode="single",
+        )
+    )
+
+    assert len(rows) == 3
+    assert extraction_calls == [3]
+    assert reviewer_calls == [3]

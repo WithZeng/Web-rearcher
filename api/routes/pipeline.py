@@ -12,6 +12,7 @@ router = APIRouter()
 class PipelineRunRequest(BaseModel):
     query: str
     limit: int | None = None
+    target_passed_count: int | None = None
     databases: list[str] | None = None
     fetch_concurrency: int | None = None
     llm_concurrency: int | None = None
@@ -88,6 +89,7 @@ async def pipeline_run(req: PipelineRunRequest):
         task_id = start_pipeline_task(
             query=req.query,
             limit=req.limit,
+            target_passed_count=req.target_passed_count,
             databases=req.databases,
             fetch_concurrency=req.fetch_concurrency,
             llm_concurrency=req.llm_concurrency,

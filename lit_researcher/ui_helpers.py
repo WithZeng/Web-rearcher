@@ -503,6 +503,7 @@ def history_stats(history: list[dict]) -> dict:
     total_raw_hits = sum(int(task.get("search_metadata", {}).get("raw_hit_count") or 0) for task in search_tasks)
     total_deduped_hits = sum(int(task.get("search_metadata", {}).get("deduped_count") or 0) for task in search_tasks)
     total_final_rows = sum(int(task.get("count") or 0) for task in search_tasks)
+    total_final_passed_count = sum(int(task.get("search_metadata", {}).get("final_passed_count") or 0) for task in search_tasks)
 
     ratios = []
     for task in search_tasks:
@@ -519,6 +520,7 @@ def history_stats(history: list[dict]) -> dict:
         "total_raw_hits": total_raw_hits,
         "total_deduped_hits": total_deduped_hits,
         "total_final_rows": total_final_rows,
+        "total_final_passed_count": total_final_passed_count,
         "avg_effective_ratio": avg_effective_ratio,
     }
 

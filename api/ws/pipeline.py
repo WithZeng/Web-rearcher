@@ -99,7 +99,7 @@ def _count_running_tasks() -> int:
 
 
 def _extract_search_metadata(entry: PipelineTask) -> dict[str, Any]:
-    for message in entry.messages:
+    for message in reversed(entry.messages):
         if message.get("type") != "stage":
             continue
         stats = message.get("search_stats")
@@ -109,6 +109,13 @@ def _extract_search_metadata(entry: PipelineTask) -> dict[str, Any]:
                 "deduped_count": int(stats.get("deduped_count") or 0),
                 "returned_count": int(stats.get("returned_count") or 0),
                 "db_counts": stats.get("db_counts") or {},
+                "blacklist_skipped": int(stats.get("blacklist_skipped") or 0),
+                "history_skipped": int(stats.get("history_skipped") or 0),
+                "target_passed_count": stats.get("target_passed_count"),
+                "final_passed_count": int(stats.get("final_passed_count") or 0),
+                "rounds_completed": int(stats.get("rounds_completed") or 0),
+                "exhausted_sources": list(stats.get("exhausted_sources") or []),
+                "stop_reason": stats.get("stop_reason"),
             }
     return {}
 
@@ -160,6 +167,15 @@ def _build_stage_msg(stage: str, ctx: PipelineContext | None = None, detail: str
         msg["rows_reviewed"] = len(ctx.reviewed_rows)
         if getattr(ctx, "_search_stats", None):
             msg["search_stats"] = ctx._search_stats
+        if getattr(ctx, "round_number", 0):
+            msg["round_number"] = ctx.round_number
+        if getattr(ctx, "target_passed_count", None) is not None:
+            msg["passed_count"] = ctx.passed_count
+            msg["target_passed_count"] = ctx.target_passed_count
+        if getattr(ctx, "stop_reason", None):
+            msg["stop_reason"] = ctx.stop_reason
+        if getattr(ctx, "retry_count", 0):
+            msg["retry_count"] = ctx.retry_count
     if detail:
         msg["detail"] = detail
     return msg
@@ -229,6 +245,7 @@ async def _run_pipeline_task(
     task_id: str,
     query: str,
     limit: int | None,
+    target_passed_count: int | None,
     databases: list[str] | None,
     fetch_concurrency: int | None,
     llm_concurrency: int | None,
@@ -266,6 +283,7 @@ async def _run_pipeline_task(
         rows = await run_pipeline(
             query=query,
             limit=limit,
+            target_passed_count=target_passed_count,
             databases=databases,
             fetch_concurrency=fetch_concurrency,
             llm_concurrency=llm_concurrency,
@@ -594,6 +612,7 @@ async def _run_pdf_task(
 def start_pipeline_task(
     query: str,
     limit: int | None = None,
+    target_passed_count: int | None = None,
     databases: list[str] | None = None,
     fetch_concurrency: int | None = None,
     llm_concurrency: int | None = None,
@@ -618,6 +637,7 @@ def start_pipeline_task(
             task_id,
             query,
             limit,
+            target_passed_count,
             databases,
             fetch_concurrency,
             llm_concurrency,

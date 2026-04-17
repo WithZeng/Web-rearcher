@@ -274,6 +274,7 @@ export const api = {
 export interface PipelineParams {
   query: string;
   limit: number;
+  target_passed_count?: number;
   databases: string[];
   mode: string;
   use_planner: boolean;
@@ -340,6 +341,17 @@ export interface SearchStats {
   deduped_count: number;
   returned_count: number;
   database_count: number;
+  round_number?: number;
+  round_raw_count?: number;
+  round_deduped_count?: number;
+  round_returned_count?: number;
+  blacklist_skipped?: number;
+  history_skipped?: number;
+  target_passed_count?: number;
+  final_passed_count?: number;
+  rounds_completed?: number;
+  exhausted_sources?: string[];
+  stop_reason?: string | null;
 }
 
 export interface SearchMetadata {
@@ -351,6 +363,11 @@ export interface SearchMetadata {
   db_counts?: Record<string, number>;
   blacklist_skipped?: number;
   history_skipped?: number;
+  target_passed_count?: number;
+  final_passed_count?: number;
+  rounds_completed?: number;
+  exhausted_sources?: string[];
+  stop_reason?: string;
 }
 
 export interface HistoryTask {
@@ -369,6 +386,7 @@ export interface HistoryStats {
   total_raw_hits: number;
   total_deduped_hits: number;
   total_final_rows: number;
+  total_final_passed_count: number;
   avg_effective_ratio: number;
 }
 
@@ -498,6 +516,11 @@ export interface PipelineMessage {
   activityText?: string;
   data?: Record<string, unknown>;
   searchStats?: SearchStats;
+  roundNumber?: number;
+  passedCount?: number;
+  targetPassedCount?: number | null;
+  stopReason?: string | null;
+  retryCount?: number;
   rows?: Record<string, unknown>[];
   stats?: { total: number; fulltext_rate: number; avg_quality: number };
 }

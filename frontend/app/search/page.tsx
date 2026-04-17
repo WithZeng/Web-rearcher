@@ -37,7 +37,7 @@ export default function SearchPage() {
   const searchParams = useAppStore((s) => s.searchParams);
   const setSearchParam = useAppStore((s) => s.setSearchParam);
 
-  const { query, limit, selectedDbs, mode, usePlanner, fetchConcurrency, llmConcurrency } = searchParams;
+  const { query, limit, targetPassedCount, selectedDbs, mode, usePlanner, fetchConcurrency, llmConcurrency } = searchParams;
 
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [selectedPaper, setSelectedPaper] = useState<Record<string, unknown> | null>(null);
@@ -130,6 +130,7 @@ export default function SearchPage() {
       const { task_id } = await api.pipeline.run({
         query: query.trim(),
         limit,
+        target_passed_count: targetPassedCount ?? undefined,
         databases: selectedDbs,
         mode,
         use_planner: usePlanner,
@@ -155,6 +156,7 @@ export default function SearchPage() {
   }, [
     query,
     limit,
+    targetPassedCount,
     selectedDbs,
     mode,
     usePlanner,
@@ -222,7 +224,7 @@ export default function SearchPage() {
                   type="number"
                   className="h-14 w-24 rounded-full border-white/10 bg-black/20 text-center text-base text-zinc-100"
                   min={1}
-                  max={500}
+                  max={20000}
                   value={limit}
                   onChange={(e) => setSearchParam("limit", Number(e.target.value) || 1)}
                 />
@@ -370,6 +372,41 @@ export default function SearchPage() {
                           {usePlanner ? "已启用" : "已关闭"}
                         </span>
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="panel-muted p-4">
+                      <p className="text-xs font-medium text-zinc-400">Target Passed Count</p>
+                      <Input
+                        type="number"
+                        min={1}
+                        placeholder="Leave empty for single-round mode"
+                        value={targetPassedCount ?? ""}
+                        onChange={(e) => {
+                          const value = e.target.value.trim();
+                          setSearchParam("targetPassedCount", value ? Math.max(1, Number(value) || 1) : null);
+                        }}
+                        className="mt-3 h-11 rounded-2xl border-white/10 bg-black/20 text-zinc-100"
+                      />
+                      <p className="mt-3 text-xs leading-5 text-zinc-500">
+                        When set, the keyword search keeps rolling until quality-filter passed papers reach this target.
+                      </p>
+                    </div>
+
+                    <div className="panel-muted p-4">
+                      <p className="text-xs font-medium text-zinc-400">Max Unique Candidates</p>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={20000}
+                        value={limit}
+                        onChange={(e) => setSearchParam("limit", Math.max(1, Number(e.target.value) || 1))}
+                        className="mt-3 h-11 rounded-2xl border-white/10 bg-black/20 text-zinc-100"
+                      />
+                      <p className="mt-3 text-xs leading-5 text-zinc-500">
+                        In rolling mode, limit becomes the deduplicated candidate cap before the pipeline stops.
+                      </p>
                     </div>
                   </div>
 

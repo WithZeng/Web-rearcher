@@ -20,10 +20,15 @@ class PipelineContext:
     databases: list[str]
     fetch_concurrency: int
     llm_concurrency: int
+    target_passed_count: int | None = None
+    max_unique_candidates: int | None = None
+    rolling_mode: bool = False
 
     # Populated by SearchAgent
     papers: list[dict] = field(default_factory=list)
     _search_stats: dict[str, Any] = field(default_factory=dict)
+    search_cursor_state: dict[str, Any] = field(default_factory=dict)
+    desired_new_candidates: int | None = None
 
     # Populated by RetrievalAgent
     papers_with_text: list[dict] = field(default_factory=list)
@@ -48,6 +53,22 @@ class PipelineContext:
     # Bookkeeping
     logs: list[str] = field(default_factory=list)
     retry_count: int = 0
+    search_round: int = 0
+    retrieval_round: int = 0
+    quality_filter_round: int = 0
+    retry_retrieval_round: int = 0
+    candidate_pool: list[dict] = field(default_factory=list)
+    accumulated_passed_papers: list[dict] = field(default_factory=list)
+    accumulated_failed_papers: list[dict] = field(default_factory=list)
+    seen_doi_keys: set[str] = field(default_factory=set)
+    seen_title_keys: set[str] = field(default_factory=set)
+    stop_reason: str | None = None
+    round_summaries: list[dict[str, Any]] = field(default_factory=list)
+    blacklist_skipped: int = 0
+    history_skipped: int = 0
+    sources_exhausted: list[str] = field(default_factory=list)
+    passed_count: int = 0
+    round_number: int = 0
 
     # Pipeline mode: "single" (one ExtractionAgent) or "multi" (4 sub-agents)
     mode: str = "multi"

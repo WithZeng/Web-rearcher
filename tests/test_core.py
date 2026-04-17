@@ -78,6 +78,64 @@ def test_search_papers_with_stats_reports_counts():
     assert stats["db_counts"] == {"DBA": 2, "DBB": 2}
 
 
+def test_search_papers_rolling_with_stats_filters_seen_candidates():
+    from lit_researcher import search as search_module
+
+    def fake_fetch(db_name, _query, _batch_size, cursor_state, round_number):
+        if db_name == "OpenAlex" and round_number == 1:
+            return (
+                [
+                    {"paper_id": "a1", "title": "Paper A", "doi": "10.1/a"},
+                    {"paper_id": "a2", "title": "Paper B", "doi": "10.1/b"},
+                ],
+                {"cursor": "next"},
+                False,
+            )
+        if db_name == "OpenAlex" and round_number == 2:
+            return (
+                [
+                    {"paper_id": "a1-dup", "title": "Paper A duplicate", "doi": "10.1/a"},
+                    {"paper_id": "a3", "title": "Paper C", "doi": "10.1/c"},
+                ],
+                {"cursor": None, "exhausted": True},
+                True,
+            )
+        return ([], {**cursor_state, "exhausted": True}, True)
+
+    with patch.object(search_module, "_fetch_rolling_db_batch", side_effect=fake_fetch):
+        round1, stats1, state1, exhausted1 = search_module.search_papers_rolling_with_stats(
+            "test",
+            max_unique_candidates=5,
+            databases=["OpenAlex"],
+            round_number=1,
+            seen_doi_keys=set(),
+            seen_title_keys=set(),
+            per_db_cursor_state={},
+            current_unique_count=0,
+            desired_new_candidates=2,
+        )
+        seen_dois = {"10.1/a", "10.1/b"}
+        round2, stats2, _state2, exhausted2 = search_module.search_papers_rolling_with_stats(
+            "test",
+            max_unique_candidates=5,
+            databases=["OpenAlex"],
+            round_number=2,
+            seen_doi_keys=seen_dois,
+            seen_title_keys=set(),
+            per_db_cursor_state=state1,
+            current_unique_count=2,
+            desired_new_candidates=2,
+        )
+
+    assert len(round1) == 2
+    assert stats1["round_number"] == 1
+    assert stats1["raw_count"] == 2
+    assert len(round2) == 1
+    assert round2[0]["doi"] == "10.1/c"
+    assert exhausted1 == []
+    assert exhausted2 == ["OpenAlex"]
+
+
 # ── fetch.py tests ───────────────────────────────────────────────────────────
 
 
@@ -340,6 +398,7 @@ def test_history_stats_aggregates_search_metadata():
             "search_metadata": {
                 "raw_hit_count": 100,
                 "deduped_count": 40,
+                "final_passed_count": 30,
             },
         },
         {
@@ -349,6 +408,7 @@ def test_history_stats_aggregates_search_metadata():
             "search_metadata": {
                 "raw_hit_count": 50,
                 "deduped_count": 20,
+                "final_passed_count": 12,
             },
         },
         {
@@ -363,6 +423,7 @@ def test_history_stats_aggregates_search_metadata():
     assert stats["total_raw_hits"] == 150
     assert stats["total_deduped_hits"] == 60
     assert stats["total_final_rows"] == 15
+    assert stats["total_final_passed_count"] == 42
     assert round(stats["avg_effective_ratio"], 2) == 25.0
 
 
