@@ -330,7 +330,10 @@ def smart_push(
     Instead, their Notion page properties are compared field-by-field with
     the local data, and any empty Notion fields are patched with local values.
 
-    Returns stats: {pushed, skipped_quality, skipped_duplicate, patched, total, pushed_dois}.
+    Returns stats: {
+      pushed, skipped_quality, skipped_duplicate, patched, total,
+      pushed_dois, marked_dois
+    }.
     """
     def _emit(data: dict) -> None:
         if on_progress:
@@ -386,6 +389,7 @@ def smart_push(
     pushed = 0
     failed = 0
     pushed_dois: list[str] = []
+    marked_dois: set[str] = set()
     now_iso = datetime.now().isoformat()
 
     total_work = total_to_push + len(to_patch)
@@ -413,6 +417,7 @@ def smart_push(
             doi = (row.get("source_doi") or "").strip()
             if doi:
                 pushed_dois.append(doi)
+                marked_dois.add(doi)
         except Exception as e:
             failed += 1
             logger.error("Failed to write row to Notion: %s", e)
@@ -432,11 +437,24 @@ def smart_push(
             "failed": failed,
             "message": f"补全 [{work_idx}/{total_work}] {title}（{n_fields} 个字段）...",
         })
+        doi = (row.get("source_doi") or "").strip()
         if _patch_page(client, page_id, patch_props):
             patched += 1
+            row["_pushed_to_notion"] = now_iso
+            if doi:
+                marked_dois.add(doi)
         else:
             failed += 1
         time.sleep(_NOTION_RATE_DELAY)
+
+    # Any DOI already existing in Notion (including skipped duplicates and rows queued for patch)
+    # should be eligible for local history pushed-mark backfill.
+    for r in rows:
+        doi = (r.get("source_doi") or "").strip()
+        if doi and doi in existing_dois:
+            if not r.get("_pushed_to_notion"):
+                r["_pushed_to_notion"] = now_iso
+            marked_dois.add(doi)
 
     logger.info(
         "Smart push: %d pushed, %d patched, %d quality-filtered, %d duplicates",
@@ -448,7 +466,8 @@ def smart_push(
         "skipped_quality": skipped_quality,
         "skipped_duplicate": skipped_dup,
         "total": len(rows),
-        "pushed_dois": pushed_dois,
+        "pushed_dois": sorted(marked_dois),
+        "marked_dois": sorted(marked_dois),
     }
     _emit({"phase": "done", **result})
     return result

@@ -205,7 +205,7 @@ export default function HistoryPage() {
         notionPatchExisting,
       );
       setNotionResult(result);
-      if (result.pushed > 0 || result.patched > 0) {
+      if (result.pushed > 0 || result.patched > 0 || result.skipped_duplicate > 0) {
         await loadMerged(pushedTab);
       }
     } catch (err) {

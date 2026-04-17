@@ -27,6 +27,7 @@ class NotionPushResponse(BaseModel):
     skipped_duplicate: int
     total: int
     pushed_dois: list[str] = []
+    marked_dois: list[str] = []
 
 
 @router.post("/push")
@@ -60,9 +61,9 @@ async def push_to_notion(req: NotionPushRequest):
                     yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
 
             stats = task.result()
-            pushed_dois = stats.get("pushed_dois", [])
-            if pushed_dois:
-                mark_rows_pushed(pushed_dois)
+            marked_dois = stats.get("marked_dois") or stats.get("pushed_dois", [])
+            if marked_dois:
+                mark_rows_pushed(marked_dois)
 
             yield f"data: {json.dumps(stats, ensure_ascii=False)}\n\n"
         except Exception as exc:
