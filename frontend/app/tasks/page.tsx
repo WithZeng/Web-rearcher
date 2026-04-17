@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   ArrowUpRight,
@@ -106,7 +106,7 @@ function updateTaskWithMessage(task: PipelineTaskStatus, msg: PipelineMessage): 
   };
 }
 
-export default function TasksPage() {
+function TasksPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const selectedTaskId = searchParams.get("task");
@@ -456,5 +456,25 @@ export default function TasksPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+function TasksPageFallback() {
+  return (
+    <div className="app-page space-y-6">
+      <section className="page-hero">
+        <div className="rounded-[24px] border border-white/10 bg-black/20 p-6 text-sm text-zinc-400">
+          正在加载任务中心...
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export default function TasksPage() {
+  return (
+    <Suspense fallback={<TasksPageFallback />}>
+      <TasksPageContent />
+    </Suspense>
   );
 }
