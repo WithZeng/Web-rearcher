@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from api.ws.pipeline import start_pipeline_task, start_doi_task, start_pdf_task, get_task, cancel_task
+from api.ws.pipeline import start_pipeline_task, start_doi_task, start_pdf_task, get_task, cancel_task, list_live_tasks
 from lit_researcher.pdf_import import list_server_pdfs, load_server_pdf_inputs
 
 router = APIRouter()
@@ -45,11 +45,27 @@ class ServerPdfImportRequest(BaseModel):
     llm_concurrency: int | None = None
 
 
-class TaskStatusResponse(BaseModel):
+class TaskSummaryResponse(BaseModel):
     task_id: str
+    kind: str
+    title: str
+    state: str
+    current_stage: str
+    progress: float
+    detail: str
+    created_at: str
+    updated_at: str
+    result_count: int | None = None
+    cancelled: bool = False
+    activity_text: str = ""
+    papers_found: int | None = None
+    papers_passed: int | None = None
+    rows_extracted: int | None = None
+
+
+class TaskStatusResponse(TaskSummaryResponse):
     done: bool
     error: str | None = None
-    result_count: int | None = None
     messages: list[dict] = Field(default_factory=list)
 
 
@@ -153,19 +169,21 @@ async def pipeline_pdf_server(req: ServerPdfImportRequest):
     return PipelineRunResponse(task_id=task_id)
 
 
+@router.get("/live", response_model=list[TaskSummaryResponse])
+async def pipeline_live():
+    return [TaskSummaryResponse(**task) for task in list_live_tasks()]
+
+
 @router.get("/status/{task_id}", response_model=TaskStatusResponse)
 async def pipeline_status(task_id: str):
     entry = get_task(task_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="task not found")
     done = entry.task is not None and entry.task.done()
-    return TaskStatusResponse(
-        task_id=task_id,
-        done=done,
-        error=entry.error,
-        result_count=len(entry.result) if entry.result is not None else None,
-        messages=entry.messages,
-    )
+    summary = next((task for task in list_live_tasks() if task["task_id"] == task_id), None)
+    if summary is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    return TaskStatusResponse(**summary, done=done, error=entry.error, messages=entry.messages)
 
 
 @router.post("/cancel/{task_id}")

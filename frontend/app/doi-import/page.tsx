@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useRef, useState } from "react";
 import { FileText, Play, Upload } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -191,6 +192,19 @@ export default function DoiImportPage() {
       </section>
 
       <AnimatePresence>
+        {pipeline.taskId ? (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+            <div className="flex justify-end">
+              <Link href={`/tasks?task=${encodeURIComponent(pipeline.taskId)}`}>
+                <Button variant="outline" size="sm">
+                  <Play className="size-3.5" data-icon="inline-start" />
+                  在任务中心查看
+                </Button>
+              </Link>
+            </div>
+          </motion.div>
+        ) : null}
+
         {(pipeline.running || pipeline.currentStage === "complete") ? (
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
             <PipelineProgress />

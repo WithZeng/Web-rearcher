@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { ChevronDown, Database, Loader2, Search, Sparkles } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -415,6 +416,17 @@ export default function SearchPage() {
       </section>
 
       <Separator className="bg-white/8" />
+
+      {pipeline.taskId ? (
+        <div className="flex justify-end">
+          <Link href={`/tasks?task=${encodeURIComponent(pipeline.taskId)}`}>
+            <Button variant="outline" size="sm">
+              <Sparkles className="size-3.5" data-icon="inline-start" />
+              在任务中心查看
+            </Button>
+          </Link>
+        </div>
+      ) : null}
 
       {showProgress ? <PipelineProgress /> : null}
 

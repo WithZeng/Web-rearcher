@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
@@ -751,6 +752,19 @@ export default function PdfImportPage() {
           </div>
         </div>
       </section>
+
+      {pipeline.taskId ? (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+          <div className="flex justify-end">
+            <Link href={`/tasks?task=${encodeURIComponent(pipeline.taskId)}`}>
+              <Button variant="outline" size="sm">
+                <Server className="size-3.5" data-icon="inline-start" />
+                在任务中心查看
+              </Button>
+            </Link>
+          </div>
+        </motion.div>
+      ) : null}
 
       {showProgress ? (
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>

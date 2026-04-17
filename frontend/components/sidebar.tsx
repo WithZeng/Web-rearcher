@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  Activity,
   BarChart3,
   BookOpen,
   ChevronLeft,
@@ -24,12 +25,13 @@ import {
 } from "@/components/ui/tooltip";
 
 const NAV_ITEMS = [
-  { label: "智能检索", icon: Search, path: "/search" },
-  { label: "DOI 导入", icon: FileInput, path: "/doi-import" },
-  { label: "PDF 导入", icon: FileUp, path: "/pdf-import" },
-  { label: "历史记录", icon: History, path: "/history" },
-  { label: "统计分析", icon: BarChart3, path: "/stats" },
-  { label: "系统设置", icon: Settings, path: "/settings" },
+  { label: "智能检索", icon: Search, path: "/search", hint: "检索与抽取主工作台" },
+  { label: "DOI 导入", icon: FileInput, path: "/doi-import", hint: "批量导入 DOI 列表" },
+  { label: "PDF 导入", icon: FileUp, path: "/pdf-import", hint: "上传本地 PDF 文件" },
+  { label: "任务中心", icon: Activity, path: "/tasks", hint: "跨设备查看当前活动任务" },
+  { label: "历史记录", icon: History, path: "/history", hint: "查看历史任务与合并结果" },
+  { label: "统计分析", icon: BarChart3, path: "/stats", hint: "总览任务与质量分布" },
+  { label: "系统设置", icon: Settings, path: "/settings", hint: "配置模型与数据源" },
 ] as const;
 
 const EXPANDED_WIDTH = 280;
@@ -139,14 +141,7 @@ export function Sidebar() {
                         className="min-w-0 overflow-hidden"
                       >
                         <p className="truncate text-sm font-medium">{item.label}</p>
-                        <p className="truncate text-xs text-zinc-500">
-                          {item.path === "/search" && "检索与抽取主工作台"}
-                          {item.path === "/doi-import" && "批量导入 DOI 列表"}
-                          {item.path === "/pdf-import" && "上传本地 PDF 文件"}
-                          {item.path === "/history" && "查看历史任务与合并结果"}
-                          {item.path === "/stats" && "总览任务与质量分布"}
-                          {item.path === "/settings" && "配置模型与数据源"}
-                        </p>
+                        <p className="truncate text-xs text-zinc-500">{item.hint}</p>
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -183,7 +178,7 @@ export function Sidebar() {
                 Tip
               </p>
               <p className="mt-2 text-sm leading-6 text-zinc-400">
-                页面样式已统一为工作台模式，功能入口和原有流程保持不变。
+                任务中心适合跨设备接管运行中的任务，历史记录继续承接完成后的长期结果。
               </p>
             </motion.div>
           )}
