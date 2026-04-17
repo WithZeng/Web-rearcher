@@ -49,12 +49,36 @@ function formatTimestamp(iso: string): string {
   return date.toLocaleString();
 }
 
+function startOfLocalDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function formatGroupLabel(dateKey: string): string {
+  const date = new Date(`${dateKey}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return dateKey;
+
+  const today = startOfLocalDay(new Date());
+  const target = startOfLocalDay(date);
+  const diffDays = Math.round((today.getTime() - target.getTime()) / 86400000);
+
+  if (diffDays === 0) return "今天";
+  if (diffDays === 1) return "昨天";
+  return dateKey;
+}
+
 function isPdfFile(file: File): boolean {
   return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 }
 
 const COLLAPSED_FILE_COUNT = 3;
 const AUTO_COLLAPSE_THRESHOLD = 4;
+
+interface ServerPdfGroup {
+  key: string;
+  label: string;
+  entries: ServerPdfEntry[];
+  totalSize: number;
+}
 
 export default function PdfImportPage() {
   const pipeline = useAppStore((state) => state.pipeline);
@@ -241,6 +265,23 @@ export default function PdfImportPage() {
     () => selectedServerEntries.reduce((sum, entry) => sum + entry.size, 0),
     [selectedServerEntries],
   );
+  const serverPdfGroups = useMemo<ServerPdfGroup[]>(() => {
+    const groups = new Map<string, ServerPdfEntry[]>();
+    for (const entry of serverFiles) {
+      const parsed = new Date(entry.modified_at);
+      const key = Number.isNaN(parsed.getTime()) ? "未知日期" : parsed.toISOString().slice(0, 10);
+      const current = groups.get(key) ?? [];
+      current.push(entry);
+      groups.set(key, current);
+    }
+
+    return Array.from(groups.entries()).map(([key, entries]) => ({
+      key,
+      label: key === "未知日期" ? key : formatGroupLabel(key),
+      entries,
+      totalSize: entries.reduce((sum, entry) => sum + entry.size, 0),
+    }));
+  }, [serverFiles]);
   const shouldCollapseFiles = files.length >= AUTO_COLLAPSE_THRESHOLD;
   const visibleFiles = shouldCollapseFiles && !filesExpanded ? files.slice(0, COLLAPSED_FILE_COUNT) : files;
   const hiddenFileCount = files.length - visibleFiles.length;
@@ -252,6 +293,28 @@ export default function PdfImportPage() {
         ? current.filter((item) => item !== path)
         : [...current, path],
     );
+  }, []);
+
+  const handleSelectAllServerFiles = useCallback(() => {
+    setSelectedServerPaths(serverFiles.map((entry) => entry.path));
+  }, [serverFiles]);
+
+  const handleClearAllServerFiles = useCallback(() => {
+    setSelectedServerPaths([]);
+  }, []);
+
+  const handleSelectServerGroup = useCallback((paths: string[]) => {
+    setSelectedServerPaths((current) => {
+      const merged = new Set(current);
+      for (const path of paths) {
+        merged.add(path);
+      }
+      return Array.from(merged);
+    });
+  }, []);
+
+  const handleClearServerGroup = useCallback((paths: string[]) => {
+    setSelectedServerPaths((current) => current.filter((path) => !paths.includes(path)));
   }, []);
 
   const notionStats = useMemo(() => {
@@ -536,7 +599,16 @@ export default function PdfImportPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setSelectedServerPaths([])}
+                    onClick={handleSelectAllServerFiles}
+                    className="text-zinc-300 hover:text-zinc-100"
+                    disabled={serverFiles.length === 0 || selectedServerPaths.length === serverFiles.length}
+                  >
+                    全部选中
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleClearAllServerFiles}
                     className="text-zinc-400 hover:text-zinc-200"
                     disabled={selectedServerPaths.length === 0}
                   >
@@ -556,7 +628,50 @@ export default function PdfImportPage() {
                     当前 `output/pdfs` 中还没有可选 PDF。
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-4">
+                    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
+                      <p className="text-sm font-medium text-white">按天分组</p>
+                      <div className="mt-3 space-y-2">
+                        {serverPdfGroups.map((group) => {
+                          const groupPaths = group.entries.map((entry) => entry.path);
+                          const selectedCount = groupPaths.filter((path) => selectedServerPaths.includes(path)).length;
+                          const allSelected = selectedCount === groupPaths.length;
+
+                          return (
+                            <div key={group.key} className="flex flex-col gap-3 rounded-[16px] border border-white/8 bg-black/20 px-3 py-3 md:flex-row md:items-center md:justify-between">
+                              <div>
+                                <p className="text-sm font-medium text-white">{group.label}</p>
+                                <p className="mt-1 text-xs text-zinc-500">
+                                  {group.entries.length} 个文件 · {formatFileSize(group.totalSize)}
+                                </p>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleSelectServerGroup(groupPaths)}
+                                  className="text-zinc-300 hover:text-zinc-100"
+                                  disabled={allSelected}
+                                >
+                                  选中本组
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleClearServerGroup(groupPaths)}
+                                  className="text-zinc-400 hover:text-zinc-200"
+                                  disabled={selectedCount === 0}
+                                >
+                                  取消本组
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
                     {serverFiles.map((entry) => {
                       const selected = selectedServerPaths.includes(entry.path);
                       return (
@@ -586,6 +701,7 @@ export default function PdfImportPage() {
                         </button>
                       );
                     })}
+                    </div>
                   </div>
                 )}
               </div>
