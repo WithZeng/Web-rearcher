@@ -27,11 +27,12 @@ from urllib.parse import urlparse
 
 import aiohttp
 from aiolimiter import AsyncLimiter
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
 from . import config
 
 logger = logging.getLogger(__name__)
+logging.getLogger("readability.readability").setLevel(logging.CRITICAL)
 
 try:
     import brotlicffi  # noqa: F401
@@ -122,6 +123,7 @@ def _get_limiter() -> AsyncLimiter:
     return limiter
 
 _MIN_USEFUL_TEXT = 200
+_INVALID_HTML_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
 # ── PDF helpers ──────────────────────────────────────────────────────────────
@@ -134,6 +136,11 @@ def _pdf_cache_path(url: str) -> Path:
 
 def _is_valid_pdf(data: bytes) -> bool:
     return data[:5].startswith(b"%PDF")
+
+
+def _sanitize_html_text(html: str) -> str:
+    """Remove characters that break lxml/readability parsing."""
+    return _INVALID_HTML_CHARS_RE.sub("", html)
 
 
 def _extract_pdf_text(pdf_bytes: bytes) -> str:
@@ -176,8 +183,22 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
 def _extract_webpage_text(html: str) -> str:
     from readability import Document
     from bs4 import BeautifulSoup
-    doc = Document(html)
-    soup = BeautifulSoup(doc.summary(), "html.parser")
+
+    clean_html = _sanitize_html_text(html)
+    if not clean_html.strip():
+        return ""
+
+    try:
+        doc = Document(clean_html)
+        soup = BeautifulSoup(doc.summary(), "html.parser")
+        text = soup.get_text(separator="\n", strip=True)
+        if text.strip():
+            return text[:config.MAX_TEXT_LEN]
+    except Exception:
+        # Fall back to raw text extraction for malformed pages.
+        pass
+
+    soup = BeautifulSoup(clean_html, "html.parser")
     return soup.get_text(separator="\n", strip=True)[:config.MAX_TEXT_LEN]
 
 
@@ -188,6 +209,16 @@ class _ForbiddenError(aiohttp.ClientResponseError):
     """Raised on HTTP 403 so we can retry with different headers."""
 
 
+def _should_retry_download_exception(exc: Exception) -> bool:
+    if isinstance(exc, (_ForbiddenError, aiohttp.ClientConnectionError, aiohttp.ClientPayloadError, asyncio.TimeoutError)):
+        return True
+    if isinstance(exc, aiohttp.ServerTimeoutError):
+        return True
+    if isinstance(exc, aiohttp.ClientResponseError):
+        return False
+    return False
+
+
 _NOSSL = _ssl_mod.create_default_context()
 _NOSSL.check_hostname = False
 _NOSSL.verify_mode = _ssl_mod.CERT_NONE
@@ -196,7 +227,7 @@ _NOSSL.verify_mode = _ssl_mod.CERT_NONE
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_exponential(multiplier=2, min=3, max=20),
-    retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),
+    retry=retry_if_exception(_should_retry_download_exception),
     reraise=True,
 )
 async def _download(
@@ -291,7 +322,7 @@ async def _fetch_pdf(session: aiohttp.ClientSession, url: str) -> str:
 
 async def _fetch_webpage(session: aiohttp.ClientSession, url: str) -> str:
     raw = await _download(session, url)
-    html = raw.decode("utf-8", errors="replace")
+    html = _sanitize_html_text(raw.decode("utf-8", errors="replace"))
     return await asyncio.to_thread(_extract_webpage_text, html)
 
 

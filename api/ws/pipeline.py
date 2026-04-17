@@ -150,6 +150,15 @@ async def _run_pipeline_task(
 
         def on_stage(stage: str, ctx: PipelineContext) -> None:
             check_cancel()
+            logger.info(
+                "Pipeline %s stage=%s papers_found=%d passed=%d rows=%d reviewed=%d",
+                task_id,
+                stage,
+                len(ctx.papers),
+                len(ctx.passed_papers),
+                len(ctx.rows),
+                len(ctx.reviewed_rows),
+            )
             pending_broadcasts.append(loop.create_task(_broadcast(task_id, _build_stage_msg(stage, ctx))))
 
         def on_activity(text: str) -> None:

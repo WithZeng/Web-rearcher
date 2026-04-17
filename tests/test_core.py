@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, AsyncMock
 
+import aiohttp
 import pytest
 
 # ── search.py tests ──────────────────────────────────────────────────────────
@@ -65,6 +67,55 @@ def test_extract_pmc_xml_text():
     text = _extract_pmc_xml_text(xml)
     assert "Hello world" in text
     assert "skip" not in text
+
+
+def test_sanitize_html_text_removes_control_chars():
+    from lit_researcher.fetch import _sanitize_html_text
+
+    raw = "abc\x00def\x01ghi\nok"
+    assert _sanitize_html_text(raw) == "abcdefghi\nok"
+
+
+def test_extract_webpage_text_fallback_on_malformed_html():
+    from lit_researcher import fetch
+
+    class BrokenDocument:
+        def __init__(self, _html: str):
+            pass
+
+        def summary(self):
+            raise ValueError("bad html")
+
+    html = "<html><body><h1>Title</h1><p>Hello\x00 world</p></body></html>"
+    with patch("readability.Document", BrokenDocument):
+        text = fetch._extract_webpage_text(html)
+
+    assert "Title" in text
+    assert "Hello world" in text
+
+
+def test_should_retry_download_exception():
+    from lit_researcher.fetch import _ForbiddenError, _should_retry_download_exception
+
+    forbidden = _ForbiddenError(
+        request_info=None,
+        history=(),
+        status=403,
+        message="Forbidden",
+        headers=None,
+    )
+    not_found = aiohttp.ClientResponseError(
+        request_info=None,
+        history=(),
+        status=404,
+        message="Not Found",
+        headers=None,
+    )
+
+    assert _should_retry_download_exception(forbidden) is True
+    assert _should_retry_download_exception(asyncio.TimeoutError()) is True
+    assert _should_retry_download_exception(aiohttp.ClientConnectionError()) is True
+    assert _should_retry_download_exception(not_found) is False
 
 
 # ── extract.py tests ─────────────────────────────────────────────────────────
