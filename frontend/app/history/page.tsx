@@ -38,6 +38,10 @@ function formatTimestamp(ts: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+function renderCount(value?: number) {
+  return value != null ? `${value} 篇` : "--";
+}
+
 export default function HistoryPage() {
   const [tasks, setTasks] = useState<HistoryTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -442,6 +446,15 @@ export default function HistoryPage() {
                         className="overflow-hidden"
                       >
                         <div className="space-y-3 px-4 pb-4 pt-1">
+                          {task.search_metadata?.raw_hit_count != null || task.search_metadata?.deduped_count != null ? (
+                            <div className="rounded-[18px] border border-white/8 bg-white/[0.02] px-4 py-3 text-sm text-zinc-300">
+                              <div className="flex flex-wrap gap-4">
+                                <span>原始命中：<span className="font-medium text-white">{renderCount(task.search_metadata?.raw_hit_count)}</span></span>
+                                <span>去重后：<span className="font-medium text-white">{renderCount(task.search_metadata?.deduped_count)}</span></span>
+                                <span>最终结果：<span className="font-medium text-white">{task.count} 篇</span></span>
+                              </div>
+                            </div>
+                          ) : null}
                           <div className="flex items-center justify-end gap-2">
                             <ExportMenu rows={task.rows} />
                             <Button

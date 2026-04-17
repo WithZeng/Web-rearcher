@@ -299,6 +299,73 @@ def test_filter_unprocessed():
         path.unlink(missing_ok=True)
 
 
+def test_save_task_persists_search_metadata(monkeypatch):
+    from lit_researcher import ui_helpers
+
+    history_dir = Path("tests-runtime-history")
+    history_dir.mkdir(exist_ok=True)
+    monkeypatch.setattr(ui_helpers, "_HISTORY_DIR", history_dir)
+
+    try:
+        path = ui_helpers.save_task(
+            "query",
+            [{"source_title": "A"}],
+            databases=["OpenAlex"],
+            search_metadata={
+                "raw_hit_count": 120,
+                "deduped_count": 80,
+                "returned_count": 80,
+                "db_counts": {"OpenAlex": 120},
+            },
+        )
+
+        task = json.loads(path.read_text(encoding="utf-8"))
+        assert task["search_metadata"]["raw_hit_count"] == 120
+        assert task["search_metadata"]["deduped_count"] == 80
+        assert task["search_metadata"]["db_counts"] == {"OpenAlex": 120}
+    finally:
+        for file in history_dir.glob("task_*.json"):
+            file.unlink(missing_ok=True)
+        history_dir.rmdir()
+
+
+def test_history_stats_aggregates_search_metadata():
+    from lit_researcher.ui_helpers import history_stats
+
+    history = [
+        {
+            "query": "q1",
+            "count": 10,
+            "rows": [{"text_source": "pdf", "_data_quality": 0.8}],
+            "search_metadata": {
+                "raw_hit_count": 100,
+                "deduped_count": 40,
+            },
+        },
+        {
+            "query": "q2",
+            "count": 5,
+            "rows": [{"text_source": "webpage", "_data_quality": 0.5}],
+            "search_metadata": {
+                "raw_hit_count": 50,
+                "deduped_count": 20,
+            },
+        },
+        {
+            "query": "pdf import",
+            "count": 2,
+            "rows": [{"text_source": "pdf", "_data_quality": 1.0}],
+        },
+    ]
+
+    stats = history_stats(history)
+
+    assert stats["total_raw_hits"] == 150
+    assert stats["total_deduped_hits"] == 60
+    assert stats["total_final_rows"] == 15
+    assert round(stats["avg_effective_ratio"], 2) == 25.0
+
+
 # -- output: JSON and BibTeX --
 
 

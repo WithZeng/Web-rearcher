@@ -345,6 +345,12 @@ export interface SearchStats {
 export interface SearchMetadata {
   databases: string[];
   started_at: string;
+  raw_hit_count?: number;
+  deduped_count?: number;
+  returned_count?: number;
+  db_counts?: Record<string, number>;
+  blacklist_skipped?: number;
+  history_skipped?: number;
 }
 
 export interface HistoryTask {
@@ -360,6 +366,10 @@ export interface HistoryStats {
   total_papers: number;
   avg_quality: number;
   source_counts: Record<string, number>;
+  total_raw_hits: number;
+  total_deduped_hits: number;
+  total_final_rows: number;
+  avg_effective_ratio: number;
 }
 
 export interface MergeResult {

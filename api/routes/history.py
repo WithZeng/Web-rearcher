@@ -25,6 +25,21 @@ class HistoryStatsResponse(BaseModel):
     total_papers: int
     avg_quality: float
     source_counts: dict[str, int]
+    total_raw_hits: int
+    total_deduped_hits: int
+    total_final_rows: int
+    avg_effective_ratio: float
+
+
+class SearchMetadataResponse(BaseModel):
+    databases: list[str] = []
+    started_at: str = ""
+    raw_hit_count: int | None = None
+    deduped_count: int | None = None
+    returned_count: int | None = None
+    db_counts: dict[str, int] | None = None
+    blacklist_skipped: int | None = None
+    history_skipped: int | None = None
 
 
 class HistoryTaskResponse(BaseModel):
@@ -32,6 +47,7 @@ class HistoryTaskResponse(BaseModel):
     timestamp: str
     count: int
     rows: list[dict]
+    search_metadata: SearchMetadataResponse | None = None
 
 
 @router.get("/", response_model=list[HistoryTaskResponse])

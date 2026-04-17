@@ -86,7 +86,7 @@ export default function StatsPage() {
           查看当前文献库的整体情况。
         </h1>
         <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-300 md:text-base">
-          这里会展示任务数量、论文数量和数据质量等核心统计信息。
+          这里会展示任务数量、论文数量、检索规模和数据质量等核心统计信息。
         </p>
       </section>
 
@@ -96,11 +96,17 @@ export default function StatsPage() {
         <MetricCard label="平均数据质量" value={qualityPercent} suffix="%" />
       </section>
 
+      <section className="grid gap-4 md:grid-cols-3">
+        <MetricCard label="原始命中总量" value={stats.total_raw_hits} />
+        <MetricCard label="去重后总量" value={stats.total_deduped_hits} />
+        <MetricCard label="平均有效占比" value={stats.avg_effective_ratio} suffix="%" />
+      </section>
+
       <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <div className="panel min-w-0 p-5 md:p-6">
           <p className="page-kicker">来源分布</p>
           <h2 className="mt-2 text-xl font-semibold tracking-tight text-white">文献来源统计</h2>
-          <p className="mt-2 text-sm text-zinc-400">显示当前历史数据按来源库的分布情况。</p>
+          <p className="mt-2 text-sm text-zinc-400">显示当前历史数据按文本来源的分布情况。</p>
 
           {sourceData.length > 0 ? (
             <div className="mt-6 h-80 min-h-[320px] min-w-0">

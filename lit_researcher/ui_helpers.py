@@ -320,6 +320,7 @@ def save_task(
     query: str,
     rows: list[dict],
     databases: list[str] | None = None,
+    search_metadata: dict[str, Any] | None = None,
 ) -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     task: dict = {
@@ -330,6 +331,7 @@ def save_task(
         "search_metadata": {
             "databases": databases or [],
             "started_at": ts,
+            **(search_metadata or {}),
         },
     }
     path = _HISTORY_DIR / f"task_{ts}.json"
@@ -483,6 +485,10 @@ def history_stats(history: list[dict]) -> dict:
     total_tasks = len(history)
     total_papers = sum(len(t.get("rows", [])) for t in history)
     all_rows = [r for t in history for r in t.get("rows", [])]
+    search_tasks = [
+        task for task in history
+        if isinstance(task.get("search_metadata"), dict) and task["search_metadata"].get("raw_hit_count") is not None
+    ]
 
     avg_quality = 0.0
     if all_rows:
@@ -494,11 +500,26 @@ def history_stats(history: list[dict]) -> dict:
         src = r.get("text_source", "unknown")
         source_counts[src] = source_counts.get(src, 0) + 1
 
+    total_raw_hits = sum(int(task.get("search_metadata", {}).get("raw_hit_count") or 0) for task in search_tasks)
+    total_deduped_hits = sum(int(task.get("search_metadata", {}).get("deduped_count") or 0) for task in search_tasks)
+    total_final_rows = sum(int(task.get("count") or 0) for task in search_tasks)
+
+    ratios = []
+    for task in search_tasks:
+        deduped = int(task.get("search_metadata", {}).get("deduped_count") or 0)
+        if deduped > 0:
+            ratios.append((int(task.get("count") or 0) / deduped) * 100)
+    avg_effective_ratio = sum(ratios) / len(ratios) if ratios else 0.0
+
     return {
         "total_tasks": total_tasks,
         "total_papers": total_papers,
         "avg_quality": avg_quality,
         "source_counts": source_counts,
+        "total_raw_hits": total_raw_hits,
+        "total_deduped_hits": total_deduped_hits,
+        "total_final_rows": total_final_rows,
+        "avg_effective_ratio": avg_effective_ratio,
     }
 
 

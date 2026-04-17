@@ -98,6 +98,21 @@ def _count_running_tasks() -> int:
     )
 
 
+def _extract_search_metadata(entry: PipelineTask) -> dict[str, Any]:
+    for message in entry.messages:
+        if message.get("type") != "stage":
+            continue
+        stats = message.get("search_stats")
+        if isinstance(stats, dict):
+            return {
+                "raw_hit_count": int(stats.get("raw_count") or 0),
+                "deduped_count": int(stats.get("deduped_count") or 0),
+                "returned_count": int(stats.get("returned_count") or 0),
+                "db_counts": stats.get("db_counts") or {},
+            }
+    return {}
+
+
 def _build_task_summary(task_id: str, entry: PipelineTask) -> dict[str, Any]:
     return {
         "task_id": task_id,
@@ -278,7 +293,12 @@ async def _run_pipeline_task(
             add_to_blacklist(failed_dois)
 
         entry.result = kept
-        save_task(query, kept, databases=databases)
+        save_task(
+            query,
+            kept,
+            databases=databases,
+            search_metadata=_extract_search_metadata(entry),
+        )
         if pending_broadcasts:
             await asyncio.gather(*pending_broadcasts, return_exceptions=True)
         await _broadcast(task_id, _build_stage_msg("done", detail=f"共 {len(kept)} 条结果"))
