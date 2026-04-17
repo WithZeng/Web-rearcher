@@ -115,7 +115,6 @@ function rehydratePipeline(persistedPipeline?: Partial<PersistedPipelineState>):
       typeof persistedPipeline?.currentStage === 'string'
         ? persistedPipeline.currentStage
         : initialPipeline.currentStage,
-    // Runtime-only fields should never be restored from persisted storage.
     running: false,
     stageMessage: '',
     activityText: '',
@@ -152,6 +151,24 @@ async function fetchResults(taskId: string): Promise<Record<string, unknown>[]> 
   }
 }
 
+function buildPipelineStats(rows: Record<string, unknown>[]) {
+  const qualities = rows
+    .map((r) => Number(r._data_quality))
+    .filter((v) => !isNaN(v));
+  const avgQuality = qualities.length
+    ? qualities.reduce((a, b) => a + b, 0) / qualities.length
+    : 0;
+  const fulltextCount = rows.filter(
+    (r) => r.text_source && r.text_source !== 'none' && r.text_source !== 'abstract',
+  ).length;
+
+  return {
+    total: rows.length,
+    avg_quality: avgQuality,
+    fulltext_rate: rows.length ? fulltextCount / rows.length : 0,
+  };
+}
+
 export const useAppStore = create<AppStore>()(
   persist(
     (set, get) => ({
@@ -182,68 +199,64 @@ export const useAppStore = create<AppStore>()(
           }));
           return;
         }
+
         if (msg.type === 'complete') {
           const taskId = get().pipeline.taskId;
           set((state) => ({
             pipeline: {
               ...state.pipeline,
+              running: false,
               progress: 1,
               currentStage: 'done',
-              stageMessage: '流水线完成',
+              stageMessage: 'Pipeline complete',
               activityText: '',
+              error: null,
             },
           }));
+
           if (taskId) {
             fetchResults(taskId).then((rows) => {
-              const qualities = rows
-                .map((r) => Number(r._data_quality))
-                .filter((v) => !isNaN(v));
-              const avgQuality = qualities.length
-                ? qualities.reduce((a, b) => a + b, 0) / qualities.length
-                : 0;
-              const fulltextCount = rows.filter(
-                (r) => r.text_source && r.text_source !== 'none' && r.text_source !== 'abstract',
-              ).length;
               set((state) => ({
                 pipeline: {
                   ...state.pipeline,
-                  running: false,
                   rows,
-                  stats: {
-                    total: rows.length,
-                    avg_quality: avgQuality,
-                    fulltext_rate: rows.length ? fulltextCount / rows.length : 0,
-                  },
+                  stats: buildPipelineStats(rows),
                 },
               }));
             });
           }
-        } else if (msg.type === 'error') {
+          return;
+        }
+
+        if (msg.type === 'error') {
           set((state) => ({
             pipeline: {
               ...state.pipeline,
               running: false,
+              currentStage: 'error',
+              stageMessage: msg.message ?? state.pipeline.stageMessage,
               error: msg.message ?? 'Unknown error',
               activityText: '',
             },
           }));
-        } else {
-          const cur = get().pipeline.currentStage;
-          if (cur === 'done' || cur === 'complete') return;
-          const data = msg.data as StageData | undefined;
-          set((state) => ({
-            pipeline: {
-              ...state.pipeline,
-              progress: msg.progress ?? state.pipeline.progress,
-              currentStage: msg.stage ?? state.pipeline.currentStage,
-              stageMessage: msg.message ?? state.pipeline.stageMessage,
-              stageData: {
-                ...state.pipeline.stageData,
-                ...data,
-              },
-            },
-          }));
+          return;
         }
+
+        const cur = get().pipeline.currentStage;
+        if (cur === 'done' || cur === 'complete') return;
+        const data = msg.data as StageData | undefined;
+        set((state) => ({
+          pipeline: {
+            ...state.pipeline,
+            progress: msg.progress ?? state.pipeline.progress,
+            currentStage: msg.stage ?? state.pipeline.currentStage,
+            stageMessage: msg.message ?? state.pipeline.stageMessage,
+            stageData: {
+              ...state.pipeline.stageData,
+              ...data,
+            },
+          },
+        }));
       },
     }),
     {

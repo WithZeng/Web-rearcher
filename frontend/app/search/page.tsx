@@ -46,7 +46,6 @@ export default function SearchPage() {
   const [notionResult, setNotionResult] = useState<NotionPushResult | null>(null);
 
   const wsCloseRef = useRef<(() => void) | null>(null);
-  const reconnectedRef = useRef(false);
 
   useEffect(() => {
     api.meta().then((m) => {
@@ -58,23 +57,53 @@ export default function SearchPage() {
   }, [setMeta, selectedDbs.length, setSearchParam]);
 
   useEffect(() => {
-    if (reconnectedRef.current) return;
     const taskId = pipeline.taskId;
     const alreadyDone = pipeline.currentStage === "done" || pipeline.currentStage === "error";
-    if (!taskId || pipeline.running || alreadyDone) return;
+    if (!taskId || alreadyDone) return;
 
-    reconnectedRef.current = true;
-    api.pipeline.status(taskId).then((s) => {
-      if (!s.done && !s.error) {
-        setPipelineField("running", true);
-        wsCloseRef.current?.();
-        const { close } = connectPipeline(taskId, handlePipelineMessage, () => {
+    let cancelled = false;
+
+    const syncTaskStatus = async () => {
+      try {
+        const status = await api.pipeline.status(taskId);
+        if (cancelled) return;
+
+        if (status.error) {
+          wsCloseRef.current?.();
           wsCloseRef.current = null;
-        });
-        wsCloseRef.current = close;
+          handlePipelineMessage({ type: "error", message: status.error });
+          return;
+        }
+
+        if (status.done) {
+          wsCloseRef.current?.();
+          wsCloseRef.current = null;
+          handlePipelineMessage({ type: "complete" });
+          return;
+        }
+
+        if (!wsCloseRef.current) {
+          setPipelineField("running", true);
+          const { close } = connectPipeline(taskId, handlePipelineMessage, () => {
+            wsCloseRef.current = null;
+          });
+          wsCloseRef.current = close;
+        }
+      } catch {
+        // Keep polling so transient network issues do not leave the UI stuck forever.
       }
-    }).catch(() => {});
-  }, [pipeline.taskId, pipeline.running, pipeline.currentStage, setPipelineField, handlePipelineMessage]);
+    };
+
+    void syncTaskStatus();
+    const timer = window.setInterval(() => {
+      void syncTaskStatus();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [pipeline.taskId, pipeline.currentStage, setPipelineField, handlePipelineMessage]);
 
   useEffect(() => {
     return () => {
@@ -111,6 +140,8 @@ export default function SearchPage() {
       setPipelineField("taskId", task_id);
       setPipelineField("progress", 0);
       setPipelineField("startedAt", Date.now());
+      setPipelineField("currentStage", "");
+      setPipelineField("error", null);
 
       wsCloseRef.current?.();
       const { close } = connectPipeline(task_id, handlePipelineMessage, () => {
