@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-TEST_TEMP_ROOT = Path(__file__).resolve().parents[1] / "tests-runtime" / "pdf-server"
+TEST_TEMP_ROOT = Path(__file__).resolve().parents[1] / "tests-runtime-pdf-server"
 TEST_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 
 
