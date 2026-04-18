@@ -30,6 +30,8 @@ export interface TaskMonitorStageData {
 }
 
 export interface TaskMonitorCardProps {
+  state: string;
+  queuePosition: number | null;
   currentStage: string;
   stageMessage: string;
   progress: number;
@@ -63,7 +65,39 @@ function formatElapsed(ms: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function buildSummaryText(
+  state: string,
+  stageMessage: string,
+  queuePosition: number | null,
+  startedAt: number | null,
+  elapsed: number,
+): string {
+  if (state === "done") {
+    return startedAt ? `本次任务已结束，总耗时 ${formatElapsed(elapsed)}。` : "本次任务已结束。";
+  }
+  if (state === "queued") {
+    return stageMessage || (queuePosition ? `已加入队列，当前第 ${queuePosition} 位。` : "已加入队列，等待执行。");
+  }
+  if (state === "cancelled") {
+    return stageMessage || "任务已取消。";
+  }
+  if (state === "error") {
+    return stageMessage || "任务执行失败。";
+  }
+  return stageMessage || "系统正在等待下一步进度更新。";
+}
+
+function buildTitle(state: string, running: boolean): string {
+  if (state === "done") return "流水线已完成";
+  if (state === "queued") return "任务正在排队";
+  if (state === "cancelled") return "任务已取消";
+  if (state === "error") return "任务执行失败";
+  return running || state === "running" ? "任务正在处理中" : "等待执行";
+}
+
 export function TaskMonitorCard({
+  state,
+  queuePosition,
   currentStage,
   stageMessage,
   progress,
@@ -77,12 +111,14 @@ export function TaskMonitorCard({
 }: TaskMonitorCardProps) {
   const safeStageData = stageData && typeof stageData === "object" ? stageData : {};
   const activeIdx = stageIndex(currentStage);
-  const isComplete = currentStage === "complete" || currentStage === "done";
+  const isComplete = state === "done" || currentStage === "complete" || currentStage === "done";
+  const isQueued = state === "queued";
+  const isRunning = state === "running" || running;
 
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    if (!startedAt) {
+    if (!startedAt || isQueued) {
       return;
     }
 
@@ -101,7 +137,7 @@ export function TaskMonitorCard({
       window.cancelAnimationFrame(frame);
       clearInterval(timer);
     };
-  }, [startedAt, isComplete]);
+  }, [startedAt, isComplete, isQueued]);
 
   const metrics = [
     { label: "检索命中", value: Number(safeStageData.papers_found), unit: "篇" },
@@ -116,12 +152,10 @@ export function TaskMonitorCard({
           <div>
             <p className="page-kicker">Pipeline Status</p>
             <h3 className="mt-3 text-xl font-semibold tracking-tight text-white">
-              {isComplete ? "流水线已完成" : running ? "任务正在处理中" : "等待执行"}
+              {buildTitle(state, isRunning)}
             </h3>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
-              {isComplete
-                ? `本次任务已结束${startedAt ? `，总耗时 ${formatElapsed(elapsed)}` : ""}。`
-                : stageMessage || "系统正在等待下一步进度更新。"}
+              {buildSummaryText(state, stageMessage, queuePosition, startedAt, elapsed)}
             </p>
             {taskId ? (
               <p className="mt-2 text-xs font-mono text-zinc-500">{taskId}</p>
@@ -129,7 +163,13 @@ export function TaskMonitorCard({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {startedAt ? (
+            {typeof queuePosition === "number" ? (
+              <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs tabular-nums text-zinc-400">
+                Queue #{queuePosition}
+              </div>
+            ) : null}
+
+            {startedAt && !isQueued ? (
               <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs tabular-nums text-zinc-400">
                 <span className="inline-flex items-center gap-1.5">
                   <Clock className="size-3.5" />
@@ -138,7 +178,7 @@ export function TaskMonitorCard({
               </div>
             ) : null}
 
-            {running && !isComplete && onCancel ? (
+            {(isQueued || isRunning) && !isComplete && onCancel ? (
               <button
                 onClick={() => void onCancel()}
                 disabled={cancelling}
@@ -218,7 +258,7 @@ export function TaskMonitorCard({
 
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <AnimatePresence mode="wait">
-              {running && activityText ? (
+              {isRunning && activityText ? (
                 <motion.div
                   key={activityText}
                   className="inline-flex max-w-full items-center gap-2 overflow-hidden rounded-full border border-white/8 bg-white/[0.03] px-3 py-2"
@@ -242,7 +282,7 @@ export function TaskMonitorCard({
                   exit={{ opacity: 0 }}
                   className="text-sm text-zinc-500"
                 >
-                  {running ? "等待更详细的阶段信息..." : "任务未运行。"}
+                  {isQueued ? "任务已加入队列，等待执行..." : isRunning ? "等待更详细的阶段信息..." : "任务未运行。"}
                 </motion.p>
               )}
             </AnimatePresence>

@@ -108,11 +108,15 @@ def test_pipeline_pdf_server_starts_task(monkeypatch):
         lambda paths: [("server.pdf", b"%PDF-1.4")],
     )
 
-    def fake_start_pdf_task(*, files, mode, llm_concurrency):
+    async def fake_start_pdf_task(*, files, mode, llm_concurrency):
         captured["files"] = files
         captured["mode"] = mode
         captured["llm_concurrency"] = llm_concurrency
-        return "task-123"
+        return type("TaskEntry", (), {
+            "task_id": "task-123",
+            "state": "queued",
+            "queue_position": 2,
+        })()
 
     monkeypatch.setattr(pipeline_routes, "start_pdf_task", fake_start_pdf_task)
 
@@ -127,6 +131,8 @@ def test_pipeline_pdf_server_starts_task(monkeypatch):
     )
 
     assert response.task_id == "task-123"
+    assert response.state == "queued"
+    assert response.queue_position == 2
     assert captured["files"] == [("server.pdf", b"%PDF-1.4")]
     assert captured["mode"] == "multi"
     assert captured["llm_concurrency"] == 4

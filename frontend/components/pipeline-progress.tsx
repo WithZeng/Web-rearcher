@@ -7,6 +7,8 @@ import { TaskMonitorCard } from "@/components/task-monitor-card";
 
 export function PipelineProgress() {
   const {
+    state,
+    queuePosition,
     currentStage,
     stageMessage,
     progress,
@@ -15,8 +17,8 @@ export function PipelineProgress() {
     running,
     startedAt,
     taskId,
-  } = useAppStore((state) => state.pipeline);
-  const setPipelineField = useAppStore((state) => state.setPipelineField);
+  } = useAppStore((store) => store.pipeline);
+  const setPipelineField = useAppStore((store) => store.setPipelineField);
 
   const [cancelling, setCancelling] = useState(false);
 
@@ -25,6 +27,8 @@ export function PipelineProgress() {
     setCancelling(true);
     try {
       await api.pipeline.cancel(taskId);
+      setPipelineField("state", "cancelled");
+      setPipelineField("queuePosition", null);
       setPipelineField("running", false);
       setPipelineField("currentStage", "error");
       setPipelineField("stageMessage", "任务已取消");
@@ -39,6 +43,8 @@ export function PipelineProgress() {
 
   return (
     <TaskMonitorCard
+      state={state}
+      queuePosition={queuePosition}
       currentStage={currentStage}
       stageMessage={stageMessage}
       progress={progress}

@@ -5,6 +5,7 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -22,21 +23,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 STAGE_META: dict[str, tuple[float, str]] = {
-    "planner": (0.05, "规划搜索策略"),
-    "search": (0.15, "检索文献"),
-    "retrieval": (0.35, "获取全文"),
-    "quality_filter": (0.50, "质量筛选"),
-    "extraction": (0.70, "字段提取"),
-    "extraction_sub_agents": (0.75, "子代理提取"),
-    "extraction_merge": (0.80, "合并提取结果"),
-    "reviewer": (0.90, "审查校验"),
-    "reviewer_retry": (0.95, "重试审查"),
-    "done": (1.00, "完成"),
-    "error": (1.00, "出错"),
+    "queued": (0.0, "Queued"),
+    "planner": (0.05, "Planning"),
+    "search": (0.15, "Searching"),
+    "retrieval": (0.35, "Fetching full text"),
+    "quality_filter": (0.50, "Quality filter"),
+    "extraction": (0.70, "Extracting fields"),
+    "extraction_sub_agents": (0.75, "Sub-agent extraction"),
+    "extraction_merge": (0.80, "Merge extraction"),
+    "reviewer": (0.90, "Review"),
+    "reviewer_retry": (0.95, "Reviewer retry"),
+    "done": (1.00, "Done"),
+    "error": (1.00, "Error"),
 }
 
 _TASK_EXPIRE_SECONDS = 1800
-_MAX_CONCURRENT_TASKS = 3
+_TERMINAL_STATES = {"done", "error", "cancelled"}
 
 
 class CancelledByUser(Exception):
@@ -53,6 +55,7 @@ class PipelineTask:
     kind: str = "search"
     title: str = ""
     task: asyncio.Task | None = None
+    runner: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
     ws_connections: set[WebSocket] = field(default_factory=set)
     messages: list[dict] = field(default_factory=list)
     result: list[dict] | None = None
@@ -62,40 +65,104 @@ class PipelineTask:
     created_at_iso: str = field(default_factory=_now_iso)
     updated_at: float = field(default_factory=time.monotonic)
     updated_at_iso: str = field(default_factory=_now_iso)
-    state: str = "running"
-    current_stage: str = ""
+    started_at: float | None = None
+    started_at_iso: str | None = None
+    state: str = "queued"
+    current_stage: str = "queued"
     progress: float = 0.0
-    detail: str = ""
+    detail: str = "Waiting to enter queue"
     activity_text: str = ""
     stage_data: dict[str, int] = field(default_factory=dict)
+    queue_position: int | None = None
     finished_at: float | None = None
 
 
 _pipeline_tasks: dict[str, PipelineTask] = {}
+_queued_task_ids: list[str] = []
+_queue_lock = asyncio.Lock()
 
 
-def _purge_expired_tasks() -> int:
-    now = time.monotonic()
-    expired = [
-        task_id
-        for task_id, entry in _pipeline_tasks.items()
-        if entry.finished_at is not None
-        and (now - entry.finished_at) > _TASK_EXPIRE_SECONDS
-        and not entry.ws_connections
-    ]
-    for task_id in expired:
-        del _pipeline_tasks[task_id]
-    if expired:
-        logger.info("Purged %d expired pipeline tasks", len(expired))
-    return len(expired)
+def _is_terminal_state(state: str) -> bool:
+    return state in _TERMINAL_STATES
 
 
 def _count_running_tasks() -> int:
-    return sum(
-        1
-        for entry in _pipeline_tasks.values()
-        if entry.task is not None and not entry.task.done()
-    )
+    return sum(1 for entry in _pipeline_tasks.values() if entry.state == "running")
+
+
+def _format_queue_detail(queue_position: int) -> str:
+    ahead = max(queue_position - 1, 0)
+    return f"Queued at position {queue_position}. {ahead} task(s) ahead."
+
+
+def _build_queued_msg(queue_position: int) -> dict[str, Any]:
+    return {
+        "type": "stage",
+        "stage": "queued",
+        "progress": 0.0,
+        "label": STAGE_META["queued"][1],
+        "detail": _format_queue_detail(queue_position),
+        "state": "queued",
+        "queue_position": queue_position,
+    }
+
+
+def _build_running_msg(started_at: str) -> dict[str, Any]:
+    return {
+        "type": "stage",
+        "progress": 0.0,
+        "label": "Task started",
+        "detail": "Task started",
+        "state": "running",
+        "queue_position": None,
+        "started_at": started_at,
+    }
+
+
+def _build_cancelled_msg() -> dict[str, Any]:
+    return {
+        "type": "stage",
+        "stage": "error",
+        "progress": 1.0,
+        "label": "Cancelled",
+        "detail": "Task cancelled",
+        "state": "cancelled",
+        "queue_position": None,
+    }
+
+
+def _build_error_msg(detail: str) -> dict[str, Any]:
+    return {
+        "type": "stage",
+        "stage": "error",
+        "progress": 1.0,
+        "label": "Error",
+        "detail": detail,
+        "state": "error",
+        "queue_position": None,
+    }
+
+
+def _build_task_summary(task_id: str, entry: PipelineTask) -> dict[str, Any]:
+    return {
+        "task_id": task_id,
+        "kind": entry.kind,
+        "title": entry.title,
+        "state": entry.state,
+        "current_stage": entry.current_stage,
+        "progress": round(entry.progress, 4),
+        "detail": entry.detail,
+        "created_at": entry.created_at_iso,
+        "updated_at": entry.updated_at_iso,
+        "started_at": entry.started_at_iso,
+        "result_count": len(entry.result) if entry.result is not None else None,
+        "cancelled": entry.cancelled,
+        "activity_text": entry.activity_text,
+        "papers_found": entry.stage_data.get("papers_found"),
+        "papers_passed": entry.stage_data.get("papers_passed"),
+        "rows_extracted": entry.stage_data.get("rows_extracted"),
+        "queue_position": entry.queue_position,
+    }
 
 
 def _extract_search_metadata(entry: PipelineTask) -> dict[str, Any]:
@@ -120,39 +187,43 @@ def _extract_search_metadata(entry: PipelineTask) -> dict[str, Any]:
     return {}
 
 
-def _build_task_summary(task_id: str, entry: PipelineTask) -> dict[str, Any]:
-    return {
-        "task_id": task_id,
-        "kind": entry.kind,
-        "title": entry.title,
-        "state": entry.state,
-        "current_stage": entry.current_stage,
-        "progress": round(entry.progress, 4),
-        "detail": entry.detail,
-        "created_at": entry.created_at_iso,
-        "updated_at": entry.updated_at_iso,
-        "result_count": len(entry.result) if entry.result is not None else None,
-        "cancelled": entry.cancelled,
-        "activity_text": entry.activity_text,
-        "papers_found": entry.stage_data.get("papers_found"),
-        "papers_passed": entry.stage_data.get("papers_passed"),
-        "rows_extracted": entry.stage_data.get("rows_extracted"),
-    }
+def _purge_expired_tasks() -> int:
+    now = time.monotonic()
+    expired = [
+        task_id
+        for task_id, entry in _pipeline_tasks.items()
+        if entry.finished_at is not None
+        and (now - entry.finished_at) > _TASK_EXPIRE_SECONDS
+        and not entry.ws_connections
+    ]
+    if not expired:
+        return 0
+
+    expired_set = set(expired)
+    global _queued_task_ids
+    _queued_task_ids = [task_id for task_id in _queued_task_ids if task_id not in expired_set]
+    for task_id in expired:
+        del _pipeline_tasks[task_id]
+    logger.info("Purged %d expired pipeline tasks", len(expired))
+    return len(expired)
 
 
 def list_live_tasks() -> list[dict[str, Any]]:
     _purge_expired_tasks()
 
-    def _sort_key(item: tuple[str, PipelineTask]) -> tuple[int, float]:
+    def _sort_key(item: tuple[str, PipelineTask]) -> tuple[int, int, float]:
         _, entry = item
-        state_rank = 0 if entry.state == "running" else 1
-        return (state_rank, -entry.updated_at)
+        if entry.state == "running":
+            return (0, 0, -entry.updated_at)
+        if entry.state == "queued":
+            return (1, entry.queue_position or 0, -entry.updated_at)
+        return (2, 0, -entry.updated_at)
 
     items = sorted(_pipeline_tasks.items(), key=_sort_key)
     return [_build_task_summary(task_id, entry) for task_id, entry in items]
 
 
-def _build_stage_msg(stage: str, ctx: PipelineContext | None = None, detail: str | None = None) -> dict:
+def _build_stage_msg(stage: str, ctx: PipelineContext | None = None, detail: str | None = None) -> dict[str, Any]:
     progress, label = STAGE_META.get(stage, (0.0, stage))
     msg: dict[str, Any] = {
         "type": "stage",
@@ -181,7 +252,7 @@ def _build_stage_msg(stage: str, ctx: PipelineContext | None = None, detail: str
     return msg
 
 
-def _build_progress_msg(stage: str, progress: float, detail: str) -> dict:
+def _build_progress_msg(stage: str, progress: float, detail: str) -> dict[str, Any]:
     _, label = STAGE_META.get(stage, (progress, stage))
     return {
         "type": "stage",
@@ -192,13 +263,23 @@ def _build_progress_msg(stage: str, progress: float, detail: str) -> dict:
     }
 
 
-async def _broadcast(task_id: str, msg: dict, *, ephemeral: bool = False) -> None:
+async def _broadcast(task_id: str, msg: dict[str, Any], *, ephemeral: bool = False) -> None:
     entry = _pipeline_tasks.get(task_id)
     if entry is None:
         return
+
     entry.updated_at = time.monotonic()
     entry.updated_at_iso = _now_iso()
     msg_type = msg.get("type")
+
+    if "queue_position" in msg:
+        queue_position = msg.get("queue_position")
+        entry.queue_position = int(queue_position) if queue_position is not None else None
+
+    if "started_at" in msg:
+        started_at = msg.get("started_at")
+        entry.started_at_iso = str(started_at) if started_at else None
+
     if msg_type == "activity":
         entry.activity_text = str(msg.get("text") or "")
     elif msg_type == "stage":
@@ -216,20 +297,28 @@ async def _broadcast(task_id: str, msg: dict, *, ephemeral: bool = False) -> Non
             if msg.get(key) is not None
         }
         if stage_data:
-            entry.stage_data = {
-                **entry.stage_data,
-                **stage_data,
-            }
-        if stage == "done":
+            entry.stage_data = {**entry.stage_data, **stage_data}
+
+        explicit_state = msg.get("state")
+        if explicit_state:
+            entry.state = str(explicit_state)
+        elif stage == "queued":
+            entry.state = "queued"
+        elif stage == "done":
             entry.state = "done"
-            entry.activity_text = ""
         elif stage == "error":
             entry.state = "cancelled" if entry.cancelled else "error"
-            entry.activity_text = ""
         else:
             entry.state = "running"
+
+        if entry.state in _TERMINAL_STATES:
+            entry.activity_text = ""
+        if entry.state != "queued" and "queue_position" not in msg:
+            entry.queue_position = None
+
     if not ephemeral:
         entry.messages.append(msg)
+
     payload = json.dumps(msg, ensure_ascii=False)
     dead: list[WebSocket] = []
     for ws in entry.ws_connections:
@@ -239,6 +328,179 @@ async def _broadcast(task_id: str, msg: dict, *, ephemeral: bool = False) -> Non
             dead.append(ws)
     for ws in dead:
         entry.ws_connections.discard(ws)
+
+
+async def _refresh_queue_state_locked() -> None:
+    global _queued_task_ids
+
+    normalized: list[str] = []
+    for task_id in _queued_task_ids:
+        entry = _pipeline_tasks.get(task_id)
+        if entry is None or entry.state != "queued" or entry.cancelled:
+            continue
+        normalized.append(task_id)
+    _queued_task_ids = normalized
+
+    running_offset = 1 if _count_running_tasks() > 0 else 0
+    for index, task_id in enumerate(_queued_task_ids):
+        entry = _pipeline_tasks[task_id]
+        queue_position = running_offset + index + 1
+        detail = _format_queue_detail(queue_position)
+        if (
+            entry.state != "queued"
+            or entry.current_stage != "queued"
+            or entry.queue_position != queue_position
+            or entry.detail != detail
+        ):
+            await _broadcast(task_id, _build_queued_msg(queue_position))
+
+
+async def _run_task_wrapper(task_id: str) -> None:
+    entry = _pipeline_tasks.get(task_id)
+    if entry is None or entry.runner is None:
+        return
+
+    try:
+        await entry.runner()
+        if entry.state == "running":
+            entry.error = entry.error or "Task exited without a terminal state"
+            await _broadcast(task_id, _build_error_msg(entry.error))
+    except Exception as exc:
+        if entry.error is None:
+            entry.error = str(exc)
+        logger.exception("Unhandled task wrapper failure: %s", task_id)
+        if not _is_terminal_state(entry.state):
+            await _broadcast(task_id, _build_error_msg(entry.error or str(exc)))
+    finally:
+        if _is_terminal_state(entry.state):
+            entry.finished_at = time.monotonic()
+        entry.task = None
+        async with _queue_lock:
+            await _start_next_queued_task_locked()
+
+
+async def _start_task_locked(entry: PipelineTask) -> None:
+    entry.state = "running"
+    entry.current_stage = ""
+    entry.progress = 0.0
+    entry.queue_position = None
+    entry.started_at = time.monotonic()
+    entry.started_at_iso = _now_iso()
+    entry.finished_at = None
+    entry.detail = "Task started"
+    entry.activity_text = ""
+    entry.task = asyncio.get_running_loop().create_task(_run_task_wrapper(entry.task_id))
+    await _broadcast(entry.task_id, _build_running_msg(entry.started_at_iso))
+
+
+async def _start_next_queued_task_locked() -> None:
+    if _count_running_tasks() > 0:
+        await _refresh_queue_state_locked()
+        return
+
+    next_entry: PipelineTask | None = None
+    while _queued_task_ids:
+        task_id = _queued_task_ids.pop(0)
+        entry = _pipeline_tasks.get(task_id)
+        if entry is None or entry.state != "queued" or entry.cancelled:
+            continue
+        next_entry = entry
+        break
+
+    if next_entry is not None:
+        await _start_task_locked(next_entry)
+
+    await _refresh_queue_state_locked()
+
+
+async def _enqueue_task(entry: PipelineTask) -> PipelineTask:
+    _purge_expired_tasks()
+    _pipeline_tasks[entry.task_id] = entry
+    async with _queue_lock:
+        _queued_task_ids.append(entry.task_id)
+        await _start_next_queued_task_locked()
+    return entry
+
+
+async def _cancel_task_locked(task_id: str) -> tuple[bool, str | None]:
+    global _queued_task_ids
+
+    entry = _pipeline_tasks.get(task_id)
+    if entry is None:
+        return False, "task not found"
+    if _is_terminal_state(entry.state):
+        return False, "task already finished"
+
+    if entry.state == "queued":
+        _queued_task_ids = [queued_id for queued_id in _queued_task_ids if queued_id != task_id]
+        entry.cancelled = True
+        entry.error = "User cancelled"
+        entry.finished_at = time.monotonic()
+        await _broadcast(task_id, _build_cancelled_msg())
+        await _refresh_queue_state_locked()
+        return True, None
+
+    if entry.task is None:
+        return False, "task is not cancelable"
+
+    entry.cancelled = True
+    entry.error = "User cancelled"
+    await _broadcast(task_id, {"type": "activity", "text": "Cancelling task..."}, ephemeral=True)
+    entry.task.cancel()
+    return True, None
+
+
+async def cancel_task(task_id: str) -> bool:
+    async with _queue_lock:
+        cancelled, _ = await _cancel_task_locked(task_id)
+        return cancelled
+
+
+async def cancel_task_batch(task_ids: list[str]) -> dict[str, Any]:
+    affected_task_ids: list[str] = []
+    skipped: list[dict[str, str]] = []
+
+    async with _queue_lock:
+        for task_id in task_ids:
+            cancelled, reason = await _cancel_task_locked(task_id)
+            if cancelled:
+                affected_task_ids.append(task_id)
+            else:
+                skipped.append({"task_id": task_id, "reason": reason or "cancel failed"})
+
+    return {
+        "requested": len(task_ids),
+        "affected_task_ids": affected_task_ids,
+        "skipped": skipped,
+    }
+
+
+async def remove_task_batch(task_ids: list[str]) -> dict[str, Any]:
+    affected_task_ids: list[str] = []
+    skipped: list[dict[str, str]] = []
+
+    async with _queue_lock:
+        for task_id in task_ids:
+            entry = _pipeline_tasks.get(task_id)
+            if entry is None:
+                skipped.append({"task_id": task_id, "reason": "task not found"})
+                continue
+            if not _is_terminal_state(entry.state):
+                skipped.append({"task_id": task_id, "reason": "task is not finished"})
+                continue
+            del _pipeline_tasks[task_id]
+            affected_task_ids.append(task_id)
+
+    return {
+        "requested": len(task_ids),
+        "affected_task_ids": affected_task_ids,
+        "skipped": skipped,
+    }
+
+
+def get_task(task_id: str) -> PipelineTask | None:
+    _purge_expired_tasks()
+    return _pipeline_tasks.get(task_id)
 
 
 async def _run_pipeline_task(
@@ -295,7 +557,6 @@ async def _run_pipeline_task(
             resume=resume,
             cancel_check=check_cancel,
         )
-
         check_cancel()
 
         from lit_researcher.blacklist import add_to_blacklist
@@ -319,30 +580,16 @@ async def _run_pipeline_task(
         )
         if pending_broadcasts:
             await asyncio.gather(*pending_broadcasts, return_exceptions=True)
-        await _broadcast(task_id, _build_stage_msg("done", detail=f"共 {len(kept)} 条结果"))
+        await _broadcast(task_id, _build_stage_msg("done", detail=f"Total {len(kept)} result(s)"))
     except (asyncio.CancelledError, CancelledByUser):
         entry.cancelled = True
         if not entry.error:
-            entry.error = "用户取消"
-        await _broadcast(task_id, {
-            "type": "stage",
-            "stage": "error",
-            "progress": 1.0,
-            "label": "已取消",
-            "detail": "任务已取消",
-        })
+            entry.error = "User cancelled"
+        await _broadcast(task_id, _build_cancelled_msg())
     except Exception as exc:
         entry.error = str(exc)
         logger.exception("Pipeline task failed: %s", task_id)
-        await _broadcast(task_id, {
-            "type": "stage",
-            "stage": "error",
-            "progress": 1.0,
-            "label": "出错",
-            "detail": str(exc),
-        })
-    finally:
-        entry.finished_at = time.monotonic()
+        await _broadcast(task_id, _build_error_msg(str(exc)))
 
 
 async def _run_doi_task(
@@ -356,10 +603,10 @@ async def _run_doi_task(
     try:
         papers = dois_to_papers(dois)
 
-        await _broadcast(task_id, _build_stage_msg("retrieval", detail=f"准备获取 {len(papers)} 篇论文"))
+        await _broadcast(task_id, _build_stage_msg("retrieval", detail=f"Preparing {len(papers)} DOI paper(s)"))
         papers = await fetch_all(papers, max_concurrent=fetch_concurrency)
 
-        await _broadcast(task_id, _build_stage_msg("extraction", detail="开始提取 DOI 导入结果"))
+        await _broadcast(task_id, _build_stage_msg("extraction", detail="Starting DOI extraction"))
         rows = await extract_batch(papers, max_concurrent=llm_concurrency)
 
         from lit_researcher.agents.reviewer import ReviewerAgent
@@ -377,7 +624,7 @@ async def _run_doi_task(
         if drug_names:
             await _broadcast(
                 task_id,
-                {"type": "activity", "text": f"PubChem 查询 {len(drug_names)} 种药物..."},
+                {"type": "activity", "text": f"PubChem lookup for {len(drug_names)} drug(s)..."},
                 ephemeral=True,
             )
             pc_cache, _stats = await batch_lookup(drug_names)
@@ -397,7 +644,7 @@ async def _run_doi_task(
             mode=mode,
         )
         review_ctx.rows = rows
-        await _broadcast(task_id, _build_stage_msg("reviewer", detail="开始审查 DOI 导入结果"))
+        await _broadcast(task_id, _build_stage_msg("reviewer", detail="Reviewing DOI results"))
         review_ctx = await ReviewerAgent().run_timed(review_ctx)
         reviewed = review_ctx.reviewed_rows if review_ctx.reviewed_rows else rows
 
@@ -412,30 +659,16 @@ async def _run_doi_task(
 
         entry.result = kept
         save_task(f"DOI import ({len(dois)} papers)", kept)
-        await _broadcast(task_id, _build_stage_msg("done", detail=f"共 {len(kept)} 条结果"))
-    except (asyncio.CancelledError, CancelledByUser):
+        await _broadcast(task_id, _build_stage_msg("done", detail=f"Total {len(kept)} result(s)"))
+    except asyncio.CancelledError:
         entry.cancelled = True
         if not entry.error:
-            entry.error = "用户取消"
-        await _broadcast(task_id, {
-            "type": "stage",
-            "stage": "error",
-            "progress": 1.0,
-            "label": "已取消",
-            "detail": "任务已取消",
-        })
+            entry.error = "User cancelled"
+        await _broadcast(task_id, _build_cancelled_msg())
     except Exception as exc:
         entry.error = str(exc)
         logger.exception("DOI task failed: %s", task_id)
-        await _broadcast(task_id, {
-            "type": "stage",
-            "stage": "error",
-            "progress": 1.0,
-            "label": "出错",
-            "detail": str(exc),
-        })
-    finally:
-        entry.finished_at = time.monotonic()
+        await _broadcast(task_id, _build_error_msg(str(exc)))
 
 
 def _build_pdf_skip_row(paper: dict[str, Any], reason: str) -> dict[str, Any]:
@@ -470,21 +703,21 @@ async def _run_pdf_task(
         total_files = len(files)
         await _broadcast(
             task_id,
-            _build_progress_msg("retrieval", 0.05, f"正在解析 {total_files} 个本地 PDF 文件"),
+            _build_progress_msg("retrieval", 0.05, f"Parsing {total_files} local PDF file(s)"),
         )
 
         def on_pdf_progress(done: int, total: int, paper: dict[str, Any]) -> None:
             check_cancel()
             progress = 0.05 + (done / max(total, 1)) * 0.25
             title = str(paper.get("title") or paper.get("file_name") or "Untitled PDF")
-            status = "完成" if not paper.get("parse_error") else "失败"
+            status = "done" if not paper.get("parse_error") else "failed"
             asyncio.get_running_loop().create_task(
                 _broadcast(
                     task_id,
                     _build_progress_msg(
                         "retrieval",
                         progress,
-                        f"PDF 解析 [{done}/{total}] {status}: {title[:60]}",
+                        f"PDF parse [{done}/{total}] {status}: {title[:60]}",
                     ),
                 )
             )
@@ -507,13 +740,13 @@ async def _run_pdf_task(
         ctx._cancel_check = check_cancel
         ctx.papers = papers
         ctx.papers_with_text = papers
-        await _broadcast(task_id, _build_stage_msg("retrieval", ctx, detail=f"已解析 {len(papers)} 个 PDF"))
+        await _broadcast(task_id, _build_stage_msg("retrieval", ctx, detail=f"Parsed {len(papers)} PDF(s)"))
 
         from lit_researcher.agents.quality_filter import QualityFilterAgent
         from lit_researcher.agents.reviewer import ReviewerAgent
 
         ctx = await QualityFilterAgent().run_timed(ctx)
-        await _broadcast(task_id, _build_stage_msg("quality_filter", ctx, detail="已完成质量筛选"))
+        await _broadcast(task_id, _build_stage_msg("quality_filter", ctx, detail="Quality filter complete"))
         check_cancel()
 
         async def on_extract_complete(done: int, total: int, row: dict[str, Any]) -> None:
@@ -522,7 +755,7 @@ async def _run_pdf_task(
                 task_id,
                 {
                     "type": "activity",
-                    "text": f"字段提取 [{done}/{total}] {str(row.get('source_title') or 'Untitled PDF')[:60]}",
+                    "text": f"Extract [{done}/{total}] {str(row.get('source_title') or 'Untitled PDF')[:60]}",
                 },
                 ephemeral=True,
             )
@@ -548,12 +781,12 @@ async def _run_pdf_task(
             row["_quality_total"] = scores.get("total_score", 0.0)
 
         ctx.rows = rows
-        await _broadcast(task_id, _build_stage_msg("extraction", ctx, detail="字段提取完成"))
+        await _broadcast(task_id, _build_stage_msg("extraction", ctx, detail="Extraction complete"))
         check_cancel()
 
         if ctx.rows:
             ctx = await ReviewerAgent().run_timed(ctx)
-            await _broadcast(task_id, _build_stage_msg("reviewer", ctx, detail="结果审查完成"))
+            await _broadcast(task_id, _build_stage_msg("reviewer", ctx, detail="Review complete"))
         check_cancel()
 
         reviewed_by_paper_id = {
@@ -563,53 +796,35 @@ async def _run_pdf_task(
 
         result_rows: list[dict[str, Any]] = []
         failed_paper_ids = {str(paper.get("paper_id", "")) for paper in ctx.failed_papers}
-
         for paper in papers:
             check_cancel()
             paper_id = str(paper.get("paper_id", ""))
             if paper_id in reviewed_by_paper_id:
                 result_rows.append(reviewed_by_paper_id[paper_id])
                 continue
-
             if paper.get("parse_error"):
                 result_rows.append(_build_pdf_skip_row(paper, str(paper["parse_error"])))
                 continue
-
             if paper_id in failed_paper_ids:
-                result_rows.append(_build_pdf_skip_row(paper, "未通过质量筛选"))
+                result_rows.append(_build_pdf_skip_row(paper, "Failed quality filter"))
                 continue
-
-            result_rows.append(_build_pdf_skip_row(paper, "未能生成提取结果"))
+            result_rows.append(_build_pdf_skip_row(paper, "No extraction result"))
 
         entry.result = result_rows
         save_task(f"PDF import ({total_files} files)", result_rows)
-        await _broadcast(task_id, _build_stage_msg("done", detail=f"共 {len(result_rows)} 条结果"))
+        await _broadcast(task_id, _build_stage_msg("done", detail=f"Total {len(result_rows)} result(s)"))
     except (asyncio.CancelledError, CancelledByUser):
         entry.cancelled = True
         if not entry.error:
-            entry.error = "用户取消"
-        await _broadcast(task_id, {
-            "type": "stage",
-            "stage": "error",
-            "progress": 1.0,
-            "label": "已取消",
-            "detail": "任务已取消",
-        })
+            entry.error = "User cancelled"
+        await _broadcast(task_id, _build_cancelled_msg())
     except Exception as exc:
         entry.error = str(exc)
         logger.exception("PDF task failed: %s", task_id)
-        await _broadcast(task_id, {
-            "type": "stage",
-            "stage": "error",
-            "progress": 1.0,
-            "label": "出错",
-            "detail": str(exc),
-        })
-    finally:
-        entry.finished_at = time.monotonic()
+        await _broadcast(task_id, _build_error_msg(str(exc)))
 
 
-def start_pipeline_task(
+async def start_pipeline_task(
     query: str,
     limit: int | None = None,
     target_passed_count: int | None = None,
@@ -620,20 +835,11 @@ def start_pipeline_task(
     max_retries: int = 1,
     mode: str = "multi",
     resume: bool = False,
-) -> str:
-    _purge_expired_tasks()
-    if _count_running_tasks() >= _MAX_CONCURRENT_TASKS:
-        raise RuntimeError(f"已达到最大并发任务数 ({_MAX_CONCURRENT_TASKS})，请等待当前任务完成")
+) -> PipelineTask:
     task_id = uuid.uuid4().hex
-    entry = PipelineTask(
-        task_id=task_id,
-        kind="search",
-        title=query,
-        detail="等待任务进度",
-    )
-    _pipeline_tasks[task_id] = entry
-    entry.task = asyncio.get_running_loop().create_task(
-        _run_pipeline_task(
+
+    async def runner() -> None:
+        await _run_pipeline_task(
             task_id,
             query,
             limit,
@@ -646,83 +852,48 @@ def start_pipeline_task(
             mode,
             resume,
         )
-    )
-    return task_id
+
+    entry = PipelineTask(task_id=task_id, kind="search", title=query, runner=runner)
+    return await _enqueue_task(entry)
 
 
-def start_doi_task(
+async def start_doi_task(
     dois: list[str],
     mode: str = "multi",
     fetch_concurrency: int | None = None,
     llm_concurrency: int | None = None,
-) -> str:
-    _purge_expired_tasks()
-    if _count_running_tasks() >= _MAX_CONCURRENT_TASKS:
-        raise RuntimeError(f"已达到最大并发任务数 ({_MAX_CONCURRENT_TASKS})，请等待当前任务完成")
+) -> PipelineTask:
     task_id = uuid.uuid4().hex
+
+    async def runner() -> None:
+        await _run_doi_task(task_id, dois, mode, fetch_concurrency, llm_concurrency)
+
     entry = PipelineTask(
         task_id=task_id,
         kind="doi",
         title=f"DOI import ({len(dois)} papers)",
-        detail="等待任务进度",
+        runner=runner,
     )
-    _pipeline_tasks[task_id] = entry
-    entry.task = asyncio.get_running_loop().create_task(
-        _run_doi_task(task_id, dois, mode, fetch_concurrency, llm_concurrency)
-    )
-    return task_id
+    return await _enqueue_task(entry)
 
 
-def start_pdf_task(
+async def start_pdf_task(
     files: list[tuple[str, bytes]],
     mode: str = "multi",
     llm_concurrency: int | None = None,
-) -> str:
-    _purge_expired_tasks()
-    if _count_running_tasks() >= _MAX_CONCURRENT_TASKS:
-        raise RuntimeError(f"已达到最大并发任务数 ({_MAX_CONCURRENT_TASKS})，请等待当前任务完成")
+) -> PipelineTask:
     task_id = uuid.uuid4().hex
+
+    async def runner() -> None:
+        await _run_pdf_task(task_id, files, mode, llm_concurrency)
+
     entry = PipelineTask(
         task_id=task_id,
         kind="pdf",
         title=f"PDF import ({len(files)} files)",
-        detail="等待任务进度",
+        runner=runner,
     )
-    _pipeline_tasks[task_id] = entry
-    entry.task = asyncio.get_running_loop().create_task(
-        _run_pdf_task(task_id, files, mode, llm_concurrency)
-    )
-    return task_id
-
-
-def cancel_task(task_id: str) -> bool:
-    entry = _pipeline_tasks.get(task_id)
-    if entry is None:
-        return False
-    if entry.task is not None and not entry.task.done():
-        entry.cancelled = True
-        entry.task.cancel()
-        entry.error = "用户取消"
-        entry.state = "cancelled"
-        entry.current_stage = "error"
-        entry.progress = 1.0
-        entry.detail = "任务已取消"
-        entry.activity_text = ""
-        entry.updated_at = time.monotonic()
-        entry.updated_at_iso = _now_iso()
-        entry.finished_at = time.monotonic()
-        return True
-    return False
-
-
-def is_task_cancelled(task_id: str) -> bool:
-    entry = _pipeline_tasks.get(task_id)
-    return entry is not None and entry.cancelled
-
-
-def get_task(task_id: str) -> PipelineTask | None:
-    _purge_expired_tasks()
-    return _pipeline_tasks.get(task_id)
+    return await _enqueue_task(entry)
 
 
 @router.websocket("/ws/pipeline/{task_id}")

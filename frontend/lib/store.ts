@@ -12,6 +12,8 @@ interface StageData {
 
 interface PipelineState {
   taskId: string | null;
+  state: 'queued' | 'running' | 'done' | 'error' | 'cancelled' | string;
+  queuePosition: number | null;
   running: boolean;
   progress: number;
   currentStage: string;
@@ -54,7 +56,7 @@ interface AppStore {
 
 type PersistedPipelineState = Pick<
   PipelineState,
-  'taskId' | 'progress' | 'currentStage' | 'stageData' | 'rows' | 'stats'
+  'taskId' | 'state' | 'queuePosition' | 'progress' | 'currentStage' | 'stageData' | 'rows' | 'stats'
 >;
 
 type PersistedAppStore = Partial<Pick<AppStore, 'searchParams'>> & {
@@ -75,6 +77,8 @@ const defaultSearchParams: SearchParams = {
 function createInitialPipeline(): PipelineState {
   return {
     taskId: null,
+    state: '',
+    queuePosition: null,
     running: false,
     progress: 0,
     currentStage: '',
@@ -91,6 +95,8 @@ function createInitialPipeline(): PipelineState {
 function createPersistedPipelineSnapshot(pipeline: PipelineState): PersistedPipelineState {
   return {
     taskId: pipeline.taskId,
+    state: pipeline.state,
+    queuePosition: pipeline.queuePosition,
     progress: pipeline.progress,
     currentStage: pipeline.currentStage,
     stageData: pipeline.stageData,
@@ -112,6 +118,9 @@ function rehydratePipeline(persistedPipeline?: Partial<PersistedPipelineState>):
     rows: Array.isArray(persistedPipeline?.rows) ? persistedPipeline.rows : initialPipeline.rows,
     stats: persistedPipeline?.stats ?? initialPipeline.stats,
     taskId: typeof persistedPipeline?.taskId === 'string' ? persistedPipeline.taskId : null,
+    state: typeof persistedPipeline?.state === 'string' ? persistedPipeline.state : initialPipeline.state,
+    queuePosition:
+      typeof persistedPipeline?.queuePosition === 'number' ? persistedPipeline.queuePosition : initialPipeline.queuePosition,
     progress:
       typeof persistedPipeline?.progress === 'number' ? persistedPipeline.progress : initialPipeline.progress,
     currentStage:
@@ -172,6 +181,20 @@ function buildPipelineStats(rows: Record<string, unknown>[]) {
   };
 }
 
+function toEpochMs(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const value = new Date(iso).getTime();
+  return Number.isNaN(value) ? null : value;
+}
+
+function stateFromStage(stage: string | undefined): PipelineState['state'] | null {
+  if (!stage) return null;
+  if (stage === 'queued') return 'queued';
+  if (stage === 'done') return 'done';
+  if (stage === 'error') return 'error';
+  return 'running';
+}
+
 export const useAppStore = create<AppStore>()(
   persist(
     (set, get) => ({
@@ -208,6 +231,8 @@ export const useAppStore = create<AppStore>()(
           set((state) => ({
             pipeline: {
               ...state.pipeline,
+              state: 'done',
+              queuePosition: null,
               running: false,
               progress: 1,
               currentStage: 'done',
@@ -235,6 +260,8 @@ export const useAppStore = create<AppStore>()(
           set((state) => ({
             pipeline: {
               ...state.pipeline,
+              state: msg.state ?? 'error',
+              queuePosition: null,
               running: false,
               currentStage: 'error',
               stageMessage: msg.message ?? state.pipeline.stageMessage,
@@ -248,11 +275,16 @@ export const useAppStore = create<AppStore>()(
         const cur = get().pipeline.currentStage;
         if (cur === 'done' || cur === 'complete') return;
         const data = msg.data as StageData | undefined;
+        const nextState = msg.state ?? stateFromStage(msg.stage) ?? get().pipeline.state;
         set((state) => ({
           pipeline: {
             ...state.pipeline,
+            state: nextState,
+            queuePosition: msg.queuePosition ?? state.pipeline.queuePosition,
+            running: nextState === 'running',
             progress: msg.progress ?? state.pipeline.progress,
             currentStage: msg.stage ?? state.pipeline.currentStage,
+            startedAt: msg.startedAt != null ? toEpochMs(msg.startedAt) : state.pipeline.startedAt,
             stageMessage: [
               msg.message ?? state.pipeline.stageMessage,
               msg.roundNumber ? `Round ${msg.roundNumber}` : '',
@@ -262,6 +294,7 @@ export const useAppStore = create<AppStore>()(
               typeof msg.passedCount === 'number'
                 ? `passed ${msg.passedCount}${msg.targetPassedCount ? `/${msg.targetPassedCount}` : ''}`
                 : '',
+              typeof msg.queuePosition === 'number' ? `queue ${msg.queuePosition}` : '',
               msg.retryCount ? `retry ${msg.retryCount}` : '',
               msg.stopReason ? `stop ${msg.stopReason}` : '',
             ].filter(Boolean).join(' · '),

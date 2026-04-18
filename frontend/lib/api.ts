@@ -38,12 +38,12 @@ export const api = {
 
   pipeline: {
     run: (params: PipelineParams) =>
-      request<{ task_id: string }>('/api/pipeline/run', {
+      request<PipelineRunResponse>('/api/pipeline/run', {
         method: 'POST',
         body: JSON.stringify(params),
       }),
     doi: (params: DoiParams) =>
-      request<{ task_id: string }>('/api/pipeline/doi', {
+      request<PipelineRunResponse>('/api/pipeline/doi', {
         method: 'POST',
         body: JSON.stringify(params),
       }),
@@ -55,14 +55,14 @@ export const api = {
       formData.append('mode', params.mode);
       formData.append('llm_concurrency', String(params.llm_concurrency));
 
-      return request<{ task_id: string }>('/api/pipeline/pdf', {
+      return request<PipelineRunResponse>('/api/pipeline/pdf', {
         method: 'POST',
         body: formData,
       });
     },
     listServerPdfs: () => request<ServerPdfEntry[]>('/api/pipeline/server-pdfs'),
     serverPdf: (paths: string[], params: PdfParams) =>
-      request<{ task_id: string }>('/api/pipeline/pdf-server', {
+      request<PipelineRunResponse>('/api/pipeline/pdf-server', {
         method: 'POST',
         body: JSON.stringify({
           paths,
@@ -75,6 +75,16 @@ export const api = {
         `/api/pipeline/cancel/${taskId}`,
         { method: 'POST' },
       ),
+    cancelBatch: (taskIds: string[]) =>
+      request<BatchTaskResponse>('/api/pipeline/cancel-batch', {
+        method: 'POST',
+        body: JSON.stringify({ task_ids: taskIds }),
+      }),
+    removeBatch: (taskIds: string[]) =>
+      request<BatchTaskResponse>('/api/pipeline/remove-batch', {
+        method: 'POST',
+        body: JSON.stringify({ task_ids: taskIds }),
+      }),
     live: () => request<PipelineTaskSummary[]>('/api/pipeline/live'),
     status: (taskId: string) =>
       request<PipelineTaskStatus>(
@@ -301,22 +311,30 @@ export interface ServerPdfEntry {
   modified_at: string;
 }
 
+export interface PipelineRunResponse {
+  task_id: string;
+  state: 'queued' | 'running' | 'done' | 'error' | 'cancelled' | string;
+  queue_position: number | null;
+}
+
 export interface PipelineTaskSummary {
   task_id: string;
   kind: 'search' | 'doi' | 'pdf' | string;
   title: string;
-  state: 'running' | 'done' | 'error' | 'cancelled' | string;
+  state: 'queued' | 'running' | 'done' | 'error' | 'cancelled' | string;
   current_stage: string;
   progress: number;
   detail: string;
   created_at: string;
   updated_at: string;
+  started_at: string | null;
   result_count: number | null;
   cancelled: boolean;
   activity_text: string;
   papers_found?: number | null;
   papers_passed?: number | null;
   rows_extracted?: number | null;
+  queue_position?: number | null;
 }
 
 export interface PipelineTaskStatus extends PipelineTaskSummary {
@@ -514,6 +532,9 @@ export interface PipelineMessage {
   progress?: number;
   message?: string;
   activityText?: string;
+  state?: 'queued' | 'running' | 'done' | 'error' | 'cancelled' | string;
+  queuePosition?: number | null;
+  startedAt?: string | null;
   data?: Record<string, unknown>;
   searchStats?: SearchStats;
   roundNumber?: number;
@@ -523,4 +544,15 @@ export interface PipelineMessage {
   retryCount?: number;
   rows?: Record<string, unknown>[];
   stats?: { total: number; fulltext_rate: number; avg_quality: number };
+}
+
+export interface BatchTaskSkip {
+  task_id: string;
+  reason: string;
+}
+
+export interface BatchTaskResponse {
+  requested: number;
+  affected_task_ids: string[];
+  skipped: BatchTaskSkip[];
 }
