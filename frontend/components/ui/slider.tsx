@@ -10,7 +10,7 @@ interface SliderProps {
   step?: number
   value?: number[]
   defaultValue?: number[]
-  onValueChange?: (value: number | readonly number[]) => void
+  onValueChange?: (value: number[]) => void
   disabled?: boolean
   size?: "default" | "sm"
 }
