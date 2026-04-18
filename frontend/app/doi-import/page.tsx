@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FileText, Loader2, Play, Upload } from "lucide-react";
-import { motion } from "framer-motion";
+import { FileText, Play, Upload } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { PipelineProgress } from "@/components/pipeline-progress";
 import { ResultsTable } from "@/components/results-table";
@@ -16,27 +16,27 @@ import { useAppStore } from "@/lib/store";
 function parseDois(raw: string): string[] {
   return raw
     .split(/[\n,]+/)
-    .map((value) => value.trim())
-    .map((value) => value.replace(/^https?:\/\/doi\.org\//i, ""))
-    .filter((value) => value.includes("/"));
+    .map((s) => s.trim())
+    .map((s) => s.replace(/^https?:\/\/doi\.org\//i, ""))
+    .filter((s) => s.includes("/"));
 }
 
 function extractDoisFromCSV(text: string): string[] {
   const lines = text.trim().split("\n");
   if (lines.length === 0) return [];
 
-  const header = lines[0].split(",").map((value) => value.trim().replace(/^"|"$/g, ""));
-  const doiColIdx = header.findIndex((value) => value.toLowerCase() === "doi" || value.toLowerCase() === "source_doi");
+  const header = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
+  const doiColIdx = header.findIndex((h) => h.toLowerCase() === "doi" || h.toLowerCase() === "source_doi");
 
   if (doiColIdx !== -1) {
     return lines
       .slice(1)
       .map((line) => {
-        const cols = line.split(",").map((value) => value.trim().replace(/^"|"$/g, ""));
+        const cols = line.split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
         return cols[doiColIdx] ?? "";
       })
-      .map((value) => value.replace(/^https?:\/\/doi\.org\//i, ""))
-      .filter((value) => value.includes("/"));
+      .map((s) => s.replace(/^https?:\/\/doi\.org\//i, ""))
+      .filter((s) => s.includes("/"));
   }
 
   return parseDois(text);
@@ -115,11 +115,10 @@ export default function DoiImportPage() {
     };
   }, []);
 
-  const handleFile = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  const handleFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
-
     const reader = new FileReader();
     reader.onload = () => {
       const content = reader.result as string;
@@ -131,7 +130,6 @@ export default function DoiImportPage() {
 
   const handleSubmit = useCallback(async () => {
     if (dois.length === 0 || submitting) return;
-
     resetPipeline();
     setSubmitting(true);
 
@@ -142,7 +140,6 @@ export default function DoiImportPage() {
         fetch_concurrency: 20,
         llm_concurrency: 10,
       });
-
       setPipelineField("taskId", result.task_id);
       setPipelineField("state", result.state);
       setPipelineField("queuePosition", result.queue_position ?? null);
@@ -152,20 +149,19 @@ export default function DoiImportPage() {
       setPipelineField(
         "stageMessage",
         result.state === "queued" && typeof result.queue_position === "number"
-          ? `Queued at position ${result.queue_position}`
+          ? `已加入队列，第 ${result.queue_position} 位`
           : "",
       );
       setPipelineField("error", null);
       setPipelineField("rows", []);
       setPipelineField("stats", null);
-
       wsCloseRef.current?.();
       const { close } = connectPipeline(result.task_id, handlePipelineMessage, () => {
         wsCloseRef.current = null;
       });
       wsCloseRef.current = close;
-    } catch (error) {
-      setPipelineField("error", error instanceof Error ? error.message : "DOI import failed");
+    } catch (err) {
+      setPipelineField("error", String(err));
       setPipelineField("running", false);
     } finally {
       setSubmitting(false);
@@ -177,20 +173,20 @@ export default function DoiImportPage() {
       <section className="page-hero">
         <div className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
           <div>
-            <p className="page-kicker">DOI Import</p>
+            <p className="page-kicker">DOI 导入</p>
             <h1 className="mt-4 text-3xl font-semibold tracking-tight text-white md:text-5xl">
-              Paste DOI lists and queue them without waiting for the current task.
+              批量导入 DOI，快速处理已有文献。
             </h1>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-zinc-300 md:text-base">
-              Submit another DOI import any time. It will either start immediately or wait in the shared queue.
+              支持手动粘贴 DOI 列表，或上传 CSV / TXT 文件进行批量导入。
             </p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
             {[
-              { label: "Detected DOIs", value: String(dois.length), hint: "ready to import" },
-              { label: "Input source", value: fileName ? "File" : "Manual", hint: fileName || "text area" },
-              { label: "Execution mode", value: "Multi", hint: "same as before" },
+              { label: "识别 DOI", value: String(dois.length), hint: "当前待导入" },
+              { label: "输入来源", value: fileName ? "文件" : "手动", hint: fileName || "文本框" },
+              { label: "执行模式", value: "Multi", hint: "保持原有策略" },
             ].map((item) => (
               <div key={item.label} className="rounded-[24px] border border-white/10 bg-black/20 p-5">
                 <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">{item.label}</p>
@@ -204,16 +200,16 @@ export default function DoiImportPage() {
 
       <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <div className="panel p-5 md:p-6">
-          <p className="page-kicker">Input</p>
-          <h2 className="mt-2 text-xl font-semibold tracking-tight text-white">Paste DOI values</h2>
+          <p className="page-kicker">输入</p>
+          <h2 className="mt-2 text-xl font-semibold tracking-tight text-white">粘贴 DOI 列表</h2>
           <p className="mt-2 text-sm leading-6 text-zinc-400">
-            One DOI per line also works. Full `https://doi.org/...` links are accepted too.
+            每行一个 DOI，也支持直接粘贴 `https://doi.org/...` 链接。
           </p>
 
           <textarea
             value={text}
-            onChange={(event) => {
-              setText(event.target.value);
+            onChange={(e) => {
+              setText(e.target.value);
               setFileName(null);
             }}
             placeholder={"10.1038/s41586-023-06600-9\n10.1126/science.adg7879\n10.1016/j.cell.2023.12.028"}
@@ -231,14 +227,14 @@ export default function DoiImportPage() {
                 <Upload className="size-5" />
               </div>
               <div>
-                <p className="page-kicker">CSV / TXT</p>
-                <h2 className="mt-2 text-xl font-semibold tracking-tight text-white">Import from file</h2>
+                <p className="page-kicker">文件导入</p>
+                <h2 className="mt-2 text-xl font-semibold tracking-tight text-white">上传 CSV / TXT 文件</h2>
                 <p className="mt-2 text-sm leading-6 text-zinc-400">
-                  If the file contains a `doi` or `source_doi` column, the importer will extract it automatically.
+                  如果文件中包含 `doi` 或 `source_doi` 列，系统会自动识别并导入。
                 </p>
                 <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-zinc-300">
                   <FileText className="size-3.5" />
-                  {fileName || "Click to choose a file"}
+                  {fileName || "点击选择文件"}
                 </div>
               </div>
             </div>
@@ -253,52 +249,50 @@ export default function DoiImportPage() {
           </div>
 
           <div className="panel p-5">
-            <p className="page-kicker">Submit</p>
-            <h2 className="mt-2 text-xl font-semibold tracking-tight text-white">Queue DOI import task</h2>
+            <p className="page-kicker">开始处理</p>
+            <h2 className="mt-2 text-xl font-semibold tracking-tight text-white">导入并提取</h2>
             <p className="mt-2 text-sm leading-6 text-zinc-400">
-              The task will either start immediately or enter the queue. You can keep submitting other work afterward.
+              点击后会按现有流程执行，并在下方显示进度和结果。
             </p>
 
             <div className="mt-5 flex flex-wrap items-center gap-2">
               <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-zinc-400">
-                Detected <span className="ml-1 font-semibold text-zinc-100">{dois.length}</span> DOI(s)
+                已识别 <span className="ml-1 font-semibold text-zinc-100">{dois.length}</span> 个 DOI
               </span>
             </div>
 
             <Button
-              onClick={() => void handleSubmit()}
+              onClick={handleSubmit}
               disabled={dois.length === 0 || submitting}
               className="mt-5 h-12 rounded-full bg-cyan-400 px-5 text-slate-950 hover:bg-cyan-300"
             >
-              {submitting ? (
-                <Loader2 className="size-3.5 animate-spin" data-icon="inline-start" />
-              ) : (
-                <Play className="size-3.5" data-icon="inline-start" />
-              )}
-              Submit DOI Task
+              <Play className="size-3.5" data-icon="inline-start" />
+              开始导入并提取
             </Button>
           </div>
         </div>
       </section>
 
-      {pipeline.taskId ? (
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-          <div className="flex justify-end">
-            <Link href={`/tasks?task=${encodeURIComponent(pipeline.taskId)}`}>
-              <Button variant="outline" size="sm">
-                <Play className="size-3.5" data-icon="inline-start" />
-                View in Task Center
-              </Button>
-            </Link>
-          </div>
-        </motion.div>
-      ) : null}
+      <AnimatePresence>
+        {pipeline.taskId ? (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+            <div className="flex justify-end">
+              <Link href={`/tasks?task=${encodeURIComponent(pipeline.taskId)}`}>
+                <Button variant="outline" size="sm">
+                  <Play className="size-3.5" data-icon="inline-start" />
+                  在任务中心查看
+                </Button>
+              </Link>
+            </div>
+          </motion.div>
+        ) : null}
 
-      {(pipeline.taskId || pipeline.rows.length > 0) ? (
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-          <PipelineProgress />
-        </motion.div>
-      ) : null}
+        {(pipeline.taskId || pipeline.rows.length > 0) ? (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+            <PipelineProgress />
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       {pipeline.error ? (
         <p className="rounded-[22px] border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
@@ -310,11 +304,9 @@ export default function DoiImportPage() {
         <section className="space-y-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div>
-              <p className="page-kicker">Results</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white">Processed rows</h2>
-              <p className="mt-2 text-sm text-zinc-400">
-                {pipeline.rows.length} structured row(s) ready for export.
-              </p>
+              <p className="page-kicker">结果</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white">处理结果</h2>
+              <p className="mt-2 text-sm text-zinc-400">共返回 {pipeline.rows.length} 条结构化记录。</p>
             </div>
             <ExportMenu rows={pipeline.rows} />
           </div>
