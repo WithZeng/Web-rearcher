@@ -500,6 +500,68 @@ def test_cleanup_history_scoped_only_removes_current_filter(monkeypatch):
         history_dir.rmdir()
 
 
+def test_merge_history_rows_inherits_pushed_flag_from_duplicate_doi():
+    from lit_researcher.ui_helpers import merge_history_rows
+
+    history = [
+        {
+            "rows": [
+                {
+                    "source_doi": "10.1/a",
+                    "source_title": "Paper A",
+                    "_data_quality": 0.2,
+                    "drug_name": "DOX",
+                    "gelma_concentration": "5",
+                    "_pushed_to_notion": "2026-01-01T00:00:00",
+                },
+                {
+                    "source_doi": "10.1/a",
+                    "source_title": "Paper A",
+                    "_data_quality": 0.9,
+                    "drug_name": "DOX",
+                    "gelma_concentration": "10",
+                },
+            ]
+        }
+    ]
+
+    merged = merge_history_rows(history, pushed_filter="all")
+
+    assert len(merged) == 1
+    assert merged[0]["gelma_concentration"] == "10"
+    assert merged[0]["_pushed_to_notion"] == "2026-01-01T00:00:00"
+
+
+def test_merge_history_rows_excludes_duplicate_doi_from_unpushed_if_other_copy_was_pushed():
+    from lit_researcher.ui_helpers import merge_history_rows
+
+    history = [
+        {
+            "rows": [
+                {
+                    "source_doi": "10.1/a",
+                    "source_title": "Paper A",
+                    "_data_quality": 0.2,
+                    "drug_name": "DOX",
+                    "gelma_concentration": "5",
+                    "_pushed_to_notion": "2026-01-01T00:00:00",
+                },
+                {
+                    "source_doi": "10.1/a",
+                    "source_title": "Paper A",
+                    "_data_quality": 0.9,
+                    "drug_name": "DOX",
+                    "gelma_concentration": "10",
+                },
+            ]
+        }
+    ]
+
+    merged_unpushed = merge_history_rows(history, pushed_filter="unpushed")
+
+    assert merged_unpushed == []
+
+
 # -- output: JSON and BibTeX --
 
 

@@ -717,6 +717,17 @@ def merge_history_rows(
     """
     from .output import _CORE_FIELDS
 
+    def _merge_push_state(best: dict, candidate: dict) -> dict:
+        best_pushed = best.get("_pushed_to_notion")
+        candidate_pushed = candidate.get("_pushed_to_notion")
+        if best_pushed:
+            return best
+        if candidate_pushed:
+            merged = dict(best)
+            merged["_pushed_to_notion"] = candidate_pushed
+            return merged
+        return best
+
     best_by_doi: dict[str, dict] = {}
     best_by_title: dict[str, dict] = {}
     no_key: list[dict] = []
@@ -726,14 +737,22 @@ def merge_history_rows(
             doi = _normalize_doi(row.get("source_doi") or "")
             if doi:
                 existing = best_by_doi.get(doi)
-                if existing is None or _row_quality_score(row) > _row_quality_score(existing):
+                if existing is None:
                     best_by_doi[doi] = row
+                elif _row_quality_score(row) > _row_quality_score(existing):
+                    best_by_doi[doi] = _merge_push_state(row, existing)
+                else:
+                    best_by_doi[doi] = _merge_push_state(existing, row)
             else:
                 norm_title = _normalize_title(row.get("source_title") or "")
                 if norm_title:
                     existing = best_by_title.get(norm_title)
-                    if existing is None or _row_quality_score(row) > _row_quality_score(existing):
+                    if existing is None:
                         best_by_title[norm_title] = row
+                    elif _row_quality_score(row) > _row_quality_score(existing):
+                        best_by_title[norm_title] = _merge_push_state(row, existing)
+                    else:
+                        best_by_title[norm_title] = _merge_push_state(existing, row)
                 else:
                     no_key.append(row)
 
