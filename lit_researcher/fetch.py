@@ -93,6 +93,32 @@ _PUBLISHER_REFERERS = {
     "frontiersin.org": "https://www.frontiersin.org/",
 }
 
+_NON_PDF_EXTENSIONS = (
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".tif", ".tiff",
+)
+
+
+def _should_attempt_pdf_url(url: str) -> bool:
+    """Cheap guardrail to avoid obvious non-PDF or landing-page URLs."""
+    if not url:
+        return False
+    lowered = url.lower()
+    parsed = urlparse(lowered)
+    host = parsed.hostname or ""
+    path = parsed.path or ""
+
+    if path.endswith(_NON_PDF_EXTENSIONS):
+        return False
+    if host in {"doi.org", "www.doi.org"}:
+        return False
+    if "/content/image/" in path:
+        return False
+    if "/science/article/" in path and not path.endswith(".pdf"):
+        return False
+    if "/articles/" in path and not path.endswith(".pdf") and "nature.com" in host:
+        return False
+    return True
+
 
 def _get_referer(url: str) -> str:
     """Pick a plausible Referer for the given URL based on publisher domain."""
@@ -303,6 +329,9 @@ async def _warm_session(session: aiohttp.ClientSession, url: str) -> None:
 
 
 async def _fetch_pdf(session: aiohttp.ClientSession, url: str) -> str:
+    if not _should_attempt_pdf_url(url):
+        logger.debug("Skip obvious non-PDF URL: %s", url)
+        return ""
     cache = _pdf_cache_path(url)
     if cache.exists():
         pdf_bytes = cache.read_bytes()

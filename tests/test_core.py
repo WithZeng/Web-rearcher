@@ -101,6 +101,14 @@ def test_search_openalex_batch_uses_supported_select_fields():
     assert captured["params"]["select"] == "id,display_name,doi,abstract_inverted_index,open_access,ids"
 
 
+def test_should_attempt_pdf_url_skips_obvious_non_pdf_targets():
+    from lit_researcher.fetch import _should_attempt_pdf_url
+
+    assert _should_attempt_pdf_url("https://doi.org/10.1016/j.foo") is False
+    assert _should_attempt_pdf_url("https://ars.els-cdn.com/content/image/1-s2.0-S123-ga1_lrg.jpg") is False
+    assert _should_attempt_pdf_url("https://www.nature.com/articles/abc123.pdf") is True
+
+
 def test_search_papers_rolling_with_stats_filters_seen_candidates():
     from lit_researcher import search as search_module
 

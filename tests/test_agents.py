@@ -15,6 +15,7 @@ from lit_researcher.agents.quality_filter import (
     score_article_type,
 )
 from lit_researcher.agents.reviewer import ReviewerAgent, review_row
+from lit_researcher.agents.orchestrator import _prefilter_retrieval_candidates
 
 
 def _make_ctx(**kwargs) -> PipelineContext:
@@ -146,6 +147,19 @@ def test_quality_filter_mixed():
     ctx = asyncio.run(QualityFilterAgent().run(ctx))
     assert len(ctx.passed_papers) == 3
     assert len(ctx.failed_papers) == 1
+
+
+def test_prefilter_retrieval_candidates_for_gelma_query():
+    papers = [
+        {"title": "GelMA microsphere drug release system", "abstract": "controlled release in GelMA microspheres"},
+        {"title": "Nasal delivery review", "abstract": "general overview of mucosal transport and patient adherence"},
+    ]
+
+    kept, filtered = _prefilter_retrieval_candidates("GelMA microsphere controlled release", papers)
+
+    assert len(kept) == 1
+    assert filtered == 1
+    assert kept[0]["title"].startswith("GelMA")
 
 
 # -- ReviewerAgent --

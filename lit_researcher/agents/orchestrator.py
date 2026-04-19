@@ -10,6 +10,7 @@ Both modes preserve the original single-flow as a fallback.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -29,6 +30,36 @@ from .search_agent import SearchAgent
 from .source_agent import SourceAgent
 
 logger = logging.getLogger(__name__)
+
+_DOMAIN_PREFILTER_TERMS = (
+    "gelma", "gel-ma", "gelatin methacryloyl", "gelatin methacrylate",
+    "microsphere", "microparticle", "microgel",
+    "controlled release", "sustained release", "drug release",
+)
+
+
+def _should_apply_domain_prefilter(query: str) -> bool:
+    lowered = (query or "").lower()
+    hits = sum(1 for term in _DOMAIN_PREFILTER_TERMS if term in lowered)
+    return hits >= 2
+
+
+def _prefilter_retrieval_candidates(query: str, papers: list[dict]) -> tuple[list[dict], int]:
+    if not _should_apply_domain_prefilter(query):
+        return papers, 0
+
+    from .quality_filter import score_relevance
+
+    kept: list[dict] = []
+    filtered = 0
+    for paper in papers:
+        title = str(paper.get("title") or "")
+        abstract = str(paper.get("abstract") or "")
+        if score_relevance(abstract, title) >= 0.2:
+            kept.append(paper)
+        else:
+            filtered += 1
+    return kept, filtered
 
 
 def _pick_best_value(a, b):
@@ -279,11 +310,13 @@ async def run_pipeline(
             ctx.papers, hist_skipped = filter_history_duplicates(ctx.papers)
             ctx.history_skipped += hist_skipped
 
+            ctx.papers, relevance_prefiltered = _prefilter_retrieval_candidates(query, ctx.papers)
+
             ctx.emit_activity(
                 f"Round {ctx.search_round}: raw {round_stats.get('round_raw_count', 0)}, "
                 f"new unique {round_stats.get('round_returned_count', 0)}, "
                 f"blacklist skipped {blacklist_skipped}, history skipped {hist_skipped}, "
-                f"remaining {len(ctx.papers)}"
+                f"prefilter skipped {relevance_prefiltered}, remaining {len(ctx.papers)}"
             )
 
             if ctx.papers:
@@ -418,6 +451,11 @@ async def run_pipeline(
         ctx.emit_activity(f"History dedup filtered {hist_skipped}, remaining {len(ctx.papers)}")
         if hist_skipped:
             logger.info("History dedup removed %d papers", hist_skipped)
+
+        ctx.papers, relevance_prefiltered = _prefilter_retrieval_candidates(query, ctx.papers)
+        if relevance_prefiltered:
+            ctx.emit_activity(f"Domain prefilter skipped {relevance_prefiltered}, remaining {len(ctx.papers)}")
+            logger.info("Domain prefilter removed %d low-relevance candidates", relevance_prefiltered)
         if not ctx.papers:
             logger.info("All papers already in history")
             return []
