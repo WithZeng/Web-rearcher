@@ -18,6 +18,25 @@ class _FakeClient:
         self.pages = _FakePages()
 
 
+def test_passes_quality_gate_requires_gelma_priority_fields():
+    import lit_researcher.notion_writer as notion_writer
+
+    weak_row = {
+        "_data_quality": 0.5,
+        "drug_name": "DOX",
+        "gelma_concentration": "5",
+    }
+    strong_row = {
+        "_data_quality": 0.5,
+        "drug_name": "DOX",
+        "gelma_concentration": "5",
+        "release_time": "72",
+    }
+
+    assert notion_writer._passes_quality_gate(weak_row) is False
+    assert notion_writer._passes_quality_gate(strong_row) is True
+
+
 def test_smart_push_marks_duplicate_doi_as_pushed(monkeypatch):
     import lit_researcher.notion_writer as notion_writer
 

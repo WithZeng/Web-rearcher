@@ -297,6 +297,45 @@ def query_existing_pages(database_id: str | None = None) -> dict[str, dict]:
 
 _MIN_PUSH_QUALITY = 0.15
 _MIN_CORE_COUNT = 2
+_MIN_PRIORITY_COUNT = 2
+_PRIMARY_EXPERIMENT_FIELDS = [
+    "gelma_concentration",
+    "microsphere_size",
+    "encapsulation_efficiency",
+    "release_amount",
+    "release_time",
+]
+_RELEASE_FIELDS = ["release_amount", "release_time"]
+_FORMULATION_FIELDS = ["gelma_concentration", "microsphere_size", "encapsulation_efficiency"]
+
+
+def _filled_field_count(row: dict, fields: list[str]) -> int:
+    return sum(1 for field in fields if str(row.get(field) or "").strip())
+
+
+def _quality_gate_reason(row: dict) -> str | None:
+    from .output import _CORE_FIELDS
+
+    q = _safe_float(row.get("_data_quality"))
+    if q < _MIN_PUSH_QUALITY:
+        return "low_quality"
+    if not str(row.get("drug_name") or "").strip():
+        return "missing_drug_name"
+
+    core_count = _filled_field_count(row, list(_CORE_FIELDS))
+    if core_count < _MIN_CORE_COUNT:
+        return "insufficient_core_fields"
+
+    primary_count = _filled_field_count(row, _PRIMARY_EXPERIMENT_FIELDS)
+    if primary_count < _MIN_PRIORITY_COUNT:
+        return "insufficient_priority_fields"
+
+    release_count = _filled_field_count(row, _RELEASE_FIELDS)
+    formulation_count = _filled_field_count(row, _FORMULATION_FIELDS)
+    if release_count == 0 and formulation_count < 2:
+        return "missing_release_or_formulation_signal"
+
+    return None
 
 
 def _passes_quality_gate(row: dict) -> bool:
@@ -307,15 +346,7 @@ def _passes_quality_gate(row: dict) -> bool:
       2. drug_name must be present
       3. At least 2 core fields filled
     """
-    from .output import _CORE_FIELDS
-
-    q = _safe_float(row.get("_data_quality"))
-    if q < _MIN_PUSH_QUALITY:
-        return False
-    if not str(row.get("drug_name") or "").strip():
-        return False
-    core_count = sum(1 for f in _CORE_FIELDS if str(row.get(f) or "").strip())
-    return core_count >= _MIN_CORE_COUNT
+    return _quality_gate_reason(row) is None
 
 
 def smart_push(

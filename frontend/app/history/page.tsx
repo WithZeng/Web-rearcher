@@ -598,6 +598,7 @@ export default function HistoryPage() {
                 <li>数据质量必须大于等于 15%</li>
                 <li>必须包含药物名称 `drug_name`</li>
                 <li>至少 2 个核心字段有值</li>
+                <li>且需至少命中 2 个 GelMA / 释放关键实验字段</li>
               </ul>
               <div className="flex items-center justify-between rounded-[20px] border border-white/8 bg-white/[0.03] px-4 py-3">
                 <div className="space-y-0.5">

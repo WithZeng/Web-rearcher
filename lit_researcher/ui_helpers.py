@@ -416,19 +416,13 @@ def _cleanup_reason(
     *,
     min_quality: float = 0.0,
 ) -> str | None:
-    from .output import _CORE_FIELDS
-    from .notion_writer import _MIN_PUSH_QUALITY, _MIN_CORE_COUNT
+    from .notion_writer import _MIN_PUSH_QUALITY, _quality_gate_reason
 
     threshold = max(min_quality, _MIN_PUSH_QUALITY)
     q = _safe_float(row.get("_data_quality"))
     if q < threshold:
         return "low_quality"
-    if not str(row.get("drug_name") or "").strip():
-        return "missing_drug_name"
-    core_count = sum(1 for fld in _CORE_FIELDS if str(row.get(fld) or "").strip())
-    if core_count < _MIN_CORE_COUNT:
-        return "insufficient_core_fields"
-    return None
+    return _quality_gate_reason(row)
 
 
 def cleanup_history_preview(
@@ -442,6 +436,8 @@ def cleanup_history_preview(
         "low_quality": 0,
         "missing_drug_name": 0,
         "insufficient_core_fields": 0,
+        "insufficient_priority_fields": 0,
+        "missing_release_or_formulation_signal": 0,
     }
     kept = 0
     for row in rows:
