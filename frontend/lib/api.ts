@@ -101,8 +101,13 @@ export const api = {
         `/api/history/merged?min_quality=${minQuality}&remove_empty=${removeEmpty}&pushed_filter=${pushedFilter}`,
       ),
     stats: () => request<HistoryStats>('/api/history/stats'),
-    cleanup: (minQuality = 0) =>
-      request<CleanupResult>(`/api/history/cleanup?min_quality=${minQuality}`, {
+    cleanupPreview: (minQuality = 0, pushedFilter = 'all') =>
+      request<CleanupResult & { breakdown: Record<string, number>; scope_count: number; pushed_filter: string }>(
+        `/api/history/cleanup-preview?min_quality=${minQuality}&pushed_filter=${pushedFilter}`,
+      ),
+    cleanup: (minQuality = 0, pushedFilter = 'all') =>
+      request<CleanupResult & { breakdown?: Record<string, number>; pushed_filter?: string }>(
+        `/api/history/cleanup?min_quality=${minQuality}&pushed_filter=${pushedFilter}`, {
         method: 'POST',
       }),
     enrichPubchem: (

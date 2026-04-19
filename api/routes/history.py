@@ -14,6 +14,8 @@ from lit_researcher.ui_helpers import (
     history_stats,
     merge_history_rows,
     cleanup_history,
+    cleanup_history_preview,
+    cleanup_history_scoped,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,10 +98,16 @@ async def get_merged_rows(
 
 
 @router.post("/cleanup")
-async def cleanup(min_quality: float = 0.0):
+async def cleanup(min_quality: float = 0.0, pushed_filter: str = "all"):
     """Permanently remove invalid/low-quality rows from all history files."""
-    result = cleanup_history(min_quality=min_quality)
+    result = cleanup_history_scoped(min_quality=min_quality, pushed_filter=pushed_filter)
     return result
+
+
+@router.get("/cleanup-preview")
+async def cleanup_preview(min_quality: float = 0.0, pushed_filter: str = "all"):
+    history = load_history()
+    return cleanup_history_preview(history, min_quality=min_quality, pushed_filter=pushed_filter)
 
 
 @router.post("/enrich-pubchem")

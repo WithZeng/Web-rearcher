@@ -61,6 +61,14 @@ export default function HistoryPage() {
   const [cleanupDialog, setCleanupDialog] = useState(false);
   const [cleanupBusy, setCleanupBusy] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<{ removed: number; rows_after: number } | null>(null);
+  const [cleanupPreview, setCleanupPreview] = useState<{
+    scope_count: number;
+    rows_after: number;
+    removed: number;
+    breakdown: Record<string, number>;
+    pushed_filter: string;
+  } | null>(null);
+  const [cleanupPreviewBusy, setCleanupPreviewBusy] = useState(false);
   const [notionBusy, setNotionBusy] = useState(false);
   const [notionDialog, setNotionDialog] = useState(false);
   const [notionResult, setNotionResult] = useState<{
@@ -159,19 +167,33 @@ export default function HistoryPage() {
   const handleCleanup = useCallback(async () => {
     setCleanupBusy(true);
     try {
-      const result = await api.history.cleanup(0);
+      const result = await api.history.cleanup(0, pushedTab);
       setCleanupResult({ removed: result.removed, rows_after: result.rows_after });
       if (result.removed > 0) {
         fetchHistory();
-        setMergedRows(null);
-        setMergeStats(null);
+        await loadMerged(pushedTab);
       }
     } catch (err) {
       console.error("Cleanup failed:", err);
     } finally {
       setCleanupBusy(false);
     }
-  }, [fetchHistory]);
+  }, [fetchHistory, loadMerged, pushedTab]);
+
+  const openCleanupDialog = useCallback(async () => {
+    setCleanupResult(null);
+    setCleanupDialog(true);
+    setCleanupPreviewBusy(true);
+    try {
+      const result = await api.history.cleanupPreview(0, pushedTab);
+      setCleanupPreview(result);
+    } catch (err) {
+      console.error("Cleanup preview failed:", err);
+      setCleanupPreview(null);
+    } finally {
+      setCleanupPreviewBusy(false);
+    }
+  }, [pushedTab]);
 
   const handlePubchemEnrich = useCallback(async () => {
     setPubchemBusy(true);
@@ -285,10 +307,7 @@ export default function HistoryPage() {
             <Button
               variant="outline"
               className="border-red-500/20 text-red-300 hover:bg-red-500/10 hover:text-red-200"
-              onClick={() => {
-                setCleanupResult(null);
-                setCleanupDialog(true);
-              }}
+              onClick={() => void openCleanupDialog()}
             >
               <Sparkles className="size-3.5" data-icon="inline-start" />
               清理无效数据
@@ -505,15 +524,35 @@ export default function HistoryPage() {
           <DialogHeader>
             <DialogTitle className="text-white">清理无效数据</DialogTitle>
             <DialogDescription className="text-zinc-400">
-              将从所有历史记录中永久移除低质量和关键字段缺失的数据。
+              将按你当前查看的合并结果口径永久移除无效数据，不再默认扫描全部历史数据。
             </DialogDescription>
           </DialogHeader>
           <ul className="list-disc space-y-1 pl-4 text-sm text-zinc-400">
+            <li>当前作用范围：{pushedTab === "unpushed" ? "未推送" : pushedTab === "pushed" ? "已推送" : "全部"} 合并结果</li>
             <li>数据质量低于 15% 的记录</li>
             <li>缺少药物名称 `drug_name` 的记录</li>
             <li>核心字段不足 2 个的记录</li>
-            <li>清理后为空的文件会被自动删除</li>
           </ul>
+          {cleanupPreviewBusy ? (
+            <div className="rounded-[20px] border border-white/8 bg-white/[0.03] p-3 text-sm text-zinc-400">
+              正在计算清理预览...
+            </div>
+          ) : cleanupPreview ? (
+            <div className="rounded-[20px] border border-white/8 bg-white/[0.03] p-3 text-sm text-zinc-300">
+              <p>当前视图共 {cleanupPreview.scope_count} 条，预计清理 {cleanupPreview.removed} 条，保留 {cleanupPreview.rows_after} 条。</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-2 text-xs text-zinc-400">
+                  低质量 {cleanupPreview.breakdown.low_quality ?? 0}
+                </span>
+                <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-2 text-xs text-zinc-400">
+                  缺药名 {cleanupPreview.breakdown.missing_drug_name ?? 0}
+                </span>
+                <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-2 text-xs text-zinc-400">
+                  核心字段不足 {cleanupPreview.breakdown.insufficient_core_fields ?? 0}
+                </span>
+              </div>
+            </div>
+          ) : null}
           {cleanupResult ? (
             <motion.div
               initial={{ opacity: 0 }}
@@ -534,7 +573,7 @@ export default function HistoryPage() {
               {cleanupResult ? "关闭" : "取消"}
             </Button>
             {!cleanupResult ? (
-              <Button variant="destructive" onClick={handleCleanup} disabled={cleanupBusy}>
+              <Button variant="destructive" onClick={handleCleanup} disabled={cleanupBusy || cleanupPreviewBusy}>
                 {cleanupBusy ? <Loader2 className="size-3.5 animate-spin" data-icon="inline-start" /> : null}
                 确认清理
               </Button>

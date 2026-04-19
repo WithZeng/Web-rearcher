@@ -427,6 +427,79 @@ def test_history_stats_aggregates_search_metadata():
     assert round(stats["avg_effective_ratio"], 2) == 25.0
 
 
+def test_cleanup_history_preview_respects_pushed_filter():
+    from lit_researcher.ui_helpers import cleanup_history_preview
+
+    history = [
+        {
+            "rows": [
+                {
+                    "source_doi": "10.1/a",
+                    "_data_quality": 0.2,
+                    "drug_name": "DOX",
+                    "gelma_concentration": "5",
+                    "_pushed_to_notion": True,
+                },
+                {
+                    "source_doi": "10.1/b",
+                    "_data_quality": 0.2,
+                    "drug_name": "",
+                    "gelma_concentration": "5",
+                },
+            ]
+        }
+    ]
+
+    result = cleanup_history_preview(history, pushed_filter="unpushed")
+
+    assert result["scope_count"] == 1
+    assert result["removed"] == 1
+    assert result["rows_after"] == 0
+    assert result["breakdown"]["missing_drug_name"] == 1
+
+
+def test_cleanup_history_scoped_only_removes_current_filter(monkeypatch):
+    from lit_researcher import ui_helpers
+
+    history_dir = Path("tests-runtime-history-cleanup")
+    history_dir.mkdir(exist_ok=True)
+    monkeypatch.setattr(ui_helpers, "_HISTORY_DIR", history_dir)
+
+    try:
+        task = {
+            "query": "demo",
+            "timestamp": "demo-ts",
+            "count": 2,
+            "rows": [
+                {
+                    "source_doi": "10.1/a",
+                    "_data_quality": 0.2,
+                    "drug_name": "DOX",
+                    "gelma_concentration": "5",
+                    "_pushed_to_notion": "2026-01-01T00:00:00",
+                },
+                {
+                    "source_doi": "10.1/b",
+                    "_data_quality": 0.2,
+                    "drug_name": "",
+                    "gelma_concentration": "5",
+                },
+            ],
+        }
+        (history_dir / "task_demo-ts.json").write_text(json.dumps(task, ensure_ascii=False), encoding="utf-8")
+
+        result = ui_helpers.cleanup_history_scoped(pushed_filter="unpushed")
+
+        assert result["removed"] == 1
+        saved = json.loads((history_dir / "task_demo-ts.json").read_text(encoding="utf-8"))
+        assert len(saved["rows"]) == 1
+        assert saved["rows"][0]["source_doi"] == "10.1/a"
+    finally:
+        for file in history_dir.glob("task_*.json"):
+            file.unlink(missing_ok=True)
+        history_dir.rmdir()
+
+
 # -- output: JSON and BibTeX --
 
 

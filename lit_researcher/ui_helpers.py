@@ -411,6 +411,121 @@ def cleanup_history(min_quality: float = 0.0) -> dict:
     }
 
 
+def _cleanup_reason(
+    row: dict,
+    *,
+    min_quality: float = 0.0,
+) -> str | None:
+    from .output import _CORE_FIELDS
+    from .notion_writer import _MIN_PUSH_QUALITY, _MIN_CORE_COUNT
+
+    threshold = max(min_quality, _MIN_PUSH_QUALITY)
+    q = _safe_float(row.get("_data_quality"))
+    if q < threshold:
+        return "low_quality"
+    if not str(row.get("drug_name") or "").strip():
+        return "missing_drug_name"
+    core_count = sum(1 for fld in _CORE_FIELDS if str(row.get(fld) or "").strip())
+    if core_count < _MIN_CORE_COUNT:
+        return "insufficient_core_fields"
+    return None
+
+
+def cleanup_history_preview(
+    history: list[dict],
+    *,
+    min_quality: float = 0.0,
+    pushed_filter: str = "all",
+) -> dict:
+    rows = merge_history_rows(history, min_quality=0.0, remove_empty=False, pushed_filter=pushed_filter)
+    by_reason = {
+        "low_quality": 0,
+        "missing_drug_name": 0,
+        "insufficient_core_fields": 0,
+    }
+    kept = 0
+    for row in rows:
+        reason = _cleanup_reason(row, min_quality=min_quality)
+        if reason is None:
+            kept += 1
+        else:
+            by_reason[reason] += 1
+    return {
+        "scope_count": len(rows),
+        "rows_after": kept,
+        "removed": len(rows) - kept,
+        "breakdown": by_reason,
+        "pushed_filter": pushed_filter,
+    }
+
+
+def cleanup_history_scoped(
+    *,
+    min_quality: float = 0.0,
+    pushed_filter: str = "all",
+) -> dict:
+    history = load_history()
+    preview = cleanup_history_preview(history, min_quality=min_quality, pushed_filter=pushed_filter)
+    if preview["removed"] == 0:
+        return {
+            "files_updated": 0,
+            "rows_before": preview["scope_count"],
+            "rows_after": preview["rows_after"],
+            "removed": 0,
+            "breakdown": preview["breakdown"],
+            "pushed_filter": pushed_filter,
+        }
+
+    files_updated = 0
+    total_before = 0
+    total_after = 0
+
+    for f in sorted(_HISTORY_DIR.glob("task_*.json")):
+        try:
+            task = json.loads(f.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+        rows = task.get("rows", [])
+        total_before += len(rows)
+        kept: list[dict] = []
+        changed = False
+        for row in rows:
+            pushed = bool(row.get("_pushed_to_notion"))
+            if pushed_filter == "pushed" and not pushed:
+                kept.append(row)
+                continue
+            if pushed_filter == "unpushed" and pushed:
+                kept.append(row)
+                continue
+
+            if _cleanup_reason(row, min_quality=min_quality) is None:
+                kept.append(row)
+            else:
+                changed = True
+
+        total_after += len(kept)
+        if changed:
+            files_updated += 1
+            task["rows"] = kept
+            task["count"] = len(kept)
+            if not kept:
+                f.unlink(missing_ok=True)
+            else:
+                f.write_text(json.dumps(task, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {
+        "files_updated": files_updated,
+        "rows_before": preview["scope_count"],
+        "rows_after": preview["rows_after"],
+        "removed": preview["removed"],
+        "breakdown": preview["breakdown"],
+        "pushed_filter": pushed_filter,
+        "total_rows_before": total_before,
+        "total_rows_after": total_after,
+    }
+
+
 def _save_enriched_rows(enriched_rows: list[dict], history: list[dict]) -> None:
     """Write enriched data back to history files.
 
