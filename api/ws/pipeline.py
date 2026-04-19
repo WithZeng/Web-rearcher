@@ -161,6 +161,11 @@ def _build_task_summary(task_id: str, entry: PipelineTask) -> dict[str, Any]:
         "papers_found": entry.stage_data.get("papers_found"),
         "papers_passed": entry.stage_data.get("papers_passed"),
         "rows_extracted": entry.stage_data.get("rows_extracted"),
+        "retrieval_attempted": entry.stage_data.get("retrieval_attempted"),
+        "retrieval_total": entry.stage_data.get("retrieval_total"),
+        "retrieval_fulltext_success": entry.stage_data.get("retrieval_fulltext_success"),
+        "retrieval_fallback_only": entry.stage_data.get("retrieval_fallback_only"),
+        "retrieval_failed": entry.stage_data.get("retrieval_failed"),
         "queue_position": entry.queue_position,
     }
 
@@ -236,6 +241,10 @@ def _build_stage_msg(stage: str, ctx: PipelineContext | None = None, detail: str
         msg["papers_passed"] = len(ctx.passed_papers)
         msg["rows_extracted"] = len(ctx.rows)
         msg["rows_reviewed"] = len(ctx.reviewed_rows)
+        retrieval_stats = getattr(ctx, "retrieval_stats", None) or {}
+        for key in ("attempted", "total", "fulltext_success", "fallback_only", "failed"):
+            if retrieval_stats.get(key) is not None:
+                msg[f"retrieval_{key}"] = int(retrieval_stats[key])
         if getattr(ctx, "_search_stats", None):
             msg["search_stats"] = ctx._search_stats
         if getattr(ctx, "round_number", 0):
@@ -293,7 +302,16 @@ async def _broadcast(task_id: str, msg: dict[str, Any], *, ephemeral: bool = Fal
             entry.detail = detail
         stage_data = {
             key: int(msg[key])
-            for key in ("papers_found", "papers_passed", "rows_extracted")
+            for key in (
+                "papers_found",
+                "papers_passed",
+                "rows_extracted",
+                "retrieval_attempted",
+                "retrieval_total",
+                "retrieval_fulltext_success",
+                "retrieval_fallback_only",
+                "retrieval_failed",
+            )
             if msg.get(key) is not None
         }
         if stage_data:

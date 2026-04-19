@@ -46,6 +46,11 @@ export function connectPipeline(
             papers_found: raw.papers_found,
             papers_passed: raw.papers_passed,
             rows_extracted: raw.rows_extracted,
+            retrieval_attempted: raw.retrieval_attempted,
+            retrieval_total: raw.retrieval_total,
+            retrieval_fulltext_success: raw.retrieval_fulltext_success,
+            retrieval_fallback_only: raw.retrieval_fallback_only,
+            retrieval_failed: raw.retrieval_failed,
           },
         };
         onMessage(msg);

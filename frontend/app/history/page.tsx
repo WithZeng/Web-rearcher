@@ -55,6 +55,8 @@ export default function HistoryPage() {
     dedupDiscarded: number;
     pushedCount: number;
     unpushedCount: number;
+    coreGateCount: number;
+    candidateOnlyCount: number;
   } | null>(null);
   const [pushedTab, setPushedTab] = useState<"all" | "unpushed" | "pushed">("unpushed");
   const [selectedPaper, setSelectedPaper] = useState<Record<string, unknown> | null>(null);
@@ -151,6 +153,8 @@ export default function HistoryPage() {
         dedupDiscarded: result.dedup_discarded ?? 0,
         pushedCount: result.pushed_count,
         unpushedCount: result.unpushed_count,
+        coreGateCount: result.core_gate_count ?? 0,
+        candidateOnlyCount: result.candidate_only_count ?? 0,
       });
     } catch (err) {
       console.error("Merge failed:", err);
@@ -340,6 +344,12 @@ export default function HistoryPage() {
                       </span>
                       <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-2 text-xs text-zinc-400">
                         未推送 <span className="ml-1 font-semibold text-zinc-100">{mergeStats.unpushedCount}</span>
+                      </span>
+                      <span className="rounded-full border border-emerald-400/15 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-200">
+                        符合核心实验门槛 <span className="ml-1 font-semibold">{mergeStats.coreGateCount}</span>
+                      </span>
+                      <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-2 text-xs text-zinc-400">
+                        仅候选保留 <span className="ml-1 font-semibold text-zinc-100">{mergeStats.candidateOnlyCount}</span>
                       </span>
                     </div>
                   ) : null}

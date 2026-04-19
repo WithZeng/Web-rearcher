@@ -23,6 +23,7 @@ import { ResultsTable } from "@/components/results-table";
 import { ExportMenu } from "@/components/export-menu";
 import { PaperDetail } from "@/components/paper-detail";
 import { api, type NotionPushResult } from "@/lib/api";
+import { SEARCH_PRESETS, recommendSearchSetup } from "@/lib/search-recommendations";
 import { connectPipeline } from "@/lib/ws";
 import { useAppStore } from "@/lib/store";
 
@@ -36,6 +37,7 @@ export default function SearchPage() {
 
   const searchParams = useAppStore((s) => s.searchParams);
   const setSearchParam = useAppStore((s) => s.setSearchParam);
+  const setSearchParams = useAppStore((s) => s.setSearchParams);
 
   const { query, limit, targetPassedCount, selectedDbs, mode, usePlanner, fetchConcurrency, llmConcurrency } = searchParams;
 
@@ -48,6 +50,7 @@ export default function SearchPage() {
   const [submitting, setSubmitting] = useState(false);
 
   const wsCloseRef = useRef<(() => void) | null>(null);
+  const recommendation = recommendSearchSetup(query, meta?.all_databases ?? []);
 
   useEffect(() => {
     api.meta().then((m) => {
@@ -127,6 +130,23 @@ export default function SearchPage() {
         : [...selectedDbs, db],
     );
   }, [selectedDbs, setSearchParam]);
+
+  const applyPreset = useCallback((presetId: "quick" | "standard" | "deep") => {
+    const preset = SEARCH_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+    setSearchParams({
+      targetPassedCount: preset.targetPassedCount,
+      limit: preset.maxUniqueCandidates,
+    });
+  }, [setSearchParams]);
+
+  const applyRecommendation = useCallback(() => {
+    setSearchParams({
+      selectedDbs: recommendation.recommendedDatabases,
+      targetPassedCount: recommendation.preset.targetPassedCount,
+      limit: recommendation.preset.maxUniqueCandidates,
+    });
+  }, [recommendation, setSearchParams]);
 
   const handleSearch = useCallback(async () => {
     if (!query.trim() || submitting) return;
@@ -276,6 +296,34 @@ export default function SearchPage() {
                 ))}
               </div>
             ) : null}
+
+            <div className="mt-6 rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.22em] text-cyan-300">推荐方案</p>
+                  <p className="mt-2 text-sm text-zinc-200">
+                    推荐参数：{recommendation.preset.label} · Target Passed Count {recommendation.preset.targetPassedCount} · Max Unique Candidates {recommendation.preset.maxUniqueCandidates}
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    推荐数据库：{recommendation.recommendedDatabases.join(" / ") || "暂无推荐"}
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" onClick={applyRecommendation}>
+                  <Sparkles className="size-3.5" data-icon="inline-start" />
+                  应用推荐
+                </Button>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {recommendation.reasons.map((reason) => (
+                  <span
+                    key={reason}
+                    className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-2 text-xs text-zinc-400"
+                  >
+                    {reason}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
@@ -360,6 +408,36 @@ export default function SearchPage() {
                 className="overflow-hidden"
               >
                 <div className="mt-5 space-y-5">
+                  <div className="panel-muted p-4">
+                    <p className="text-xs font-medium text-zinc-400">检索预设</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {SEARCH_PRESETS.map((preset) => {
+                        const active =
+                          targetPassedCount === preset.targetPassedCount && limit === preset.maxUniqueCandidates;
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => applyPreset(preset.id)}
+                            className={`rounded-full border px-4 py-2 text-xs transition ${
+                              active
+                                ? "border-cyan-400/20 bg-cyan-400/10 text-cyan-100"
+                                : "border-white/10 bg-white/[0.03] text-zinc-400 hover:text-zinc-200"
+                            }`}
+                          >
+                            {preset.label}
+                            <span className="ml-2 text-zinc-500">
+                              {preset.targetPassedCount}/{preset.maxUniqueCandidates}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-3 text-xs leading-5 text-zinc-500">
+                      建议优先使用预设参数，避免把候选上限设得过大导致任务长时间滚动获取全文。
+                    </p>
+                  </div>
+
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="panel-muted p-4">
                       <p className="text-xs font-medium text-zinc-400">流水线模式</p>
@@ -410,7 +488,7 @@ export default function SearchPage() {
                         className="mt-3 h-11 rounded-2xl border-white/10 bg-black/20 text-zinc-100"
                       />
                       <p className="mt-3 text-xs leading-5 text-zinc-500">
-                        When set, the keyword search keeps rolling until quality-filter passed papers reach this target.
+                        建议填写。它表示“通过质量筛选的目标篇数”，达到后优先停止。
                       </p>
                     </div>
 
@@ -425,7 +503,7 @@ export default function SearchPage() {
                         className="mt-3 h-11 rounded-2xl border-white/10 bg-black/20 text-zinc-100"
                       />
                       <p className="mt-3 text-xs leading-5 text-zinc-500">
-                        In rolling mode, limit becomes the deduplicated candidate cap before the pipeline stops.
+                        这是去重候选上限，不是最终高质量结果数。过大容易让任务长时间停留在获取全文阶段。
                       </p>
                     </div>
                   </div>

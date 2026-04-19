@@ -121,6 +121,16 @@ function updateTaskWithMessage(task: PipelineTaskStatus, msg: PipelineMessage): 
     papers_found: typeof data.papers_found === "number" ? data.papers_found : task.papers_found,
     papers_passed: typeof data.papers_passed === "number" ? data.papers_passed : task.papers_passed,
     rows_extracted: typeof data.rows_extracted === "number" ? data.rows_extracted : task.rows_extracted,
+    retrieval_attempted:
+      typeof data.retrieval_attempted === "number" ? data.retrieval_attempted : task.retrieval_attempted,
+    retrieval_total:
+      typeof data.retrieval_total === "number" ? data.retrieval_total : task.retrieval_total,
+    retrieval_fulltext_success:
+      typeof data.retrieval_fulltext_success === "number" ? data.retrieval_fulltext_success : task.retrieval_fulltext_success,
+    retrieval_fallback_only:
+      typeof data.retrieval_fallback_only === "number" ? data.retrieval_fallback_only : task.retrieval_fallback_only,
+    retrieval_failed:
+      typeof data.retrieval_failed === "number" ? data.retrieval_failed : task.retrieval_failed,
   };
 }
 
@@ -531,6 +541,11 @@ function TasksPageContent() {
                   papers_found: selectedTask.papers_found ?? undefined,
                   papers_passed: selectedTask.papers_passed ?? undefined,
                   rows_extracted: selectedTask.rows_extracted ?? undefined,
+                  retrieval_attempted: selectedTask.retrieval_attempted ?? undefined,
+                  retrieval_total: selectedTask.retrieval_total ?? undefined,
+                  retrieval_fulltext_success: selectedTask.retrieval_fulltext_success ?? undefined,
+                  retrieval_fallback_only: selectedTask.retrieval_fallback_only ?? undefined,
+                  retrieval_failed: selectedTask.retrieval_failed ?? undefined,
                 }}
                 activityText={selectedTask.activity_text}
                 running={selectedTask.state === "running"}

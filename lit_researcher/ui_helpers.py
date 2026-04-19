@@ -66,11 +66,15 @@ RECOMMENDED_QUERIES = [
     "GelMA hydrogel microsphere encapsulation efficiency",
     "GelMA microparticle drug loading",
     "GelMA microsphere sustained release kinetics",
+    "GelMA cumulative release",
     "photo-crosslinked gelatin microsphere drug delivery",
     "GelMA microgel drug release pH responsive",
     "GelMA microsphere fabrication characterization",
+    "GelMA microsphere particle size distribution",
     "methacrylated gelatin microsphere therapeutic agent",
     "GelMA microcarrier protein drug release",
+    "GelMA microsphere anticancer drug release",
+    "GelMA microsphere bone regeneration drug delivery",
 ]
 
 
@@ -778,6 +782,22 @@ def merge_history_rows(
 
     merged.sort(key=lambda r: _safe_float(r.get("_data_quality")), reverse=True)
     return merged
+
+
+def count_core_experiment_gate(rows: list[dict]) -> dict[str, int]:
+    from .notion_writer import _quality_gate_reason
+
+    qualified = 0
+    candidate_only = 0
+    for row in rows:
+        if _quality_gate_reason(row) is None:
+            qualified += 1
+        else:
+            candidate_only += 1
+    return {
+        "core_gate_count": qualified,
+        "candidate_only_count": candidate_only,
+    }
 
 
 # ── DOI batch import ─────────────────────────────────────────────────────────

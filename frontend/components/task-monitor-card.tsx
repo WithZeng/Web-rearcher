@@ -27,6 +27,11 @@ export interface TaskMonitorStageData {
   papers_found?: number;
   papers_passed?: number;
   rows_extracted?: number;
+  retrieval_attempted?: number;
+  retrieval_total?: number;
+  retrieval_fulltext_success?: number;
+  retrieval_fallback_only?: number;
+  retrieval_failed?: number;
 }
 
 export interface TaskMonitorCardProps {
@@ -143,6 +148,9 @@ export function TaskMonitorCard({
     { label: "检索命中", value: Number(safeStageData.papers_found), unit: "篇" },
     { label: "通过筛选", value: Number(safeStageData.papers_passed), unit: "篇" },
     { label: "已提取", value: Number(safeStageData.rows_extracted), unit: "条" },
+    { label: "已尝试全文", value: Number(safeStageData.retrieval_attempted), unit: "篇" },
+    { label: "成功正文", value: Number(safeStageData.retrieval_fulltext_success), unit: "篇" },
+    { label: "摘要兜底", value: Number(safeStageData.retrieval_fallback_only), unit: "篇" },
   ].filter((item) => !Number.isNaN(item.value) && item.value > 0);
 
   return (

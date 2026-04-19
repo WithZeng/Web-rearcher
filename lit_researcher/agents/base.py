@@ -32,6 +32,7 @@ class PipelineContext:
 
     # Populated by RetrievalAgent
     papers_with_text: list[dict] = field(default_factory=list)
+    retrieval_stats: dict[str, int] = field(default_factory=dict)
 
     # Populated by QualityFilterAgent
     passed_papers: list[dict] = field(default_factory=list)

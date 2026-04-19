@@ -74,6 +74,11 @@ class TaskSummaryResponse(BaseModel):
     papers_found: int | None = None
     papers_passed: int | None = None
     rows_extracted: int | None = None
+    retrieval_attempted: int | None = None
+    retrieval_total: int | None = None
+    retrieval_fulltext_success: int | None = None
+    retrieval_fallback_only: int | None = None
+    retrieval_failed: int | None = None
     queue_position: int | None = None
 
 

@@ -13,6 +13,7 @@ from lit_researcher.ui_helpers import (
     delete_task,
     history_stats,
     merge_history_rows,
+    count_core_experiment_gate,
     cleanup_history,
     cleanup_history_preview,
     cleanup_history_scoped,
@@ -86,6 +87,7 @@ async def get_merged_rows(
     )
     pushed_count = sum(1 for r in all_rows if r.get("_pushed_to_notion"))
     unpushed_count = len(all_rows) - pushed_count
+    gate_counts = count_core_experiment_gate(filtered)
     return {
         "count": len(filtered),
         "total_before": len(all_rows),
@@ -93,6 +95,8 @@ async def get_merged_rows(
         "dedup_discarded": total_raw - len(all_rows),
         "pushed_count": pushed_count,
         "unpushed_count": unpushed_count,
+        "core_gate_count": gate_counts["core_gate_count"],
+        "candidate_only_count": gate_counts["candidate_only_count"],
         "rows": filtered,
     }
 

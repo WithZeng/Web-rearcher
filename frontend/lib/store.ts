@@ -7,6 +7,11 @@ interface StageData {
   papers_found?: number;
   papers_passed?: number;
   rows_extracted?: number;
+  retrieval_attempted?: number;
+  retrieval_total?: number;
+  retrieval_fulltext_success?: number;
+  retrieval_fallback_only?: number;
+  retrieval_failed?: number;
   search_stats?: SearchStats;
 }
 

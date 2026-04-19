@@ -16,10 +16,26 @@ class RetrievalAgent(BaseAgent):
             self._log(ctx, "no papers to fetch")
             return ctx
 
+        def on_progress(stats: dict) -> None:
+            ctx.retrieval_stats = {
+                "attempted": int(stats.get("attempted") or 0),
+                "total": int(stats.get("total") or 0),
+                "fulltext_success": int(stats.get("fulltext_success") or 0),
+                "fallback_only": int(stats.get("fallback_only") or 0),
+                "failed": int(stats.get("failed") or 0),
+            }
+            ctx.emit_activity(
+                f"获取全文 [{ctx.retrieval_stats['attempted']}/{ctx.retrieval_stats['total']}] "
+                f"成功正文 {ctx.retrieval_stats['fulltext_success']} · "
+                f"摘要兜底 {ctx.retrieval_stats['fallback_only']} · "
+                f"无正文 {ctx.retrieval_stats['failed']}"
+            )
+
         results = await fetch_all(
             targets,
             max_concurrent=ctx.fetch_concurrency,
             on_activity=ctx._on_activity,
+            on_progress=on_progress,
         )
 
         if ctx.retry_count > 0 and ctx.papers_with_text:

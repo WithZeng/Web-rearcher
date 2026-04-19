@@ -21,6 +21,7 @@ import logging
 import random
 import re
 import ssl as _ssl_mod
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -96,6 +97,9 @@ _PUBLISHER_REFERERS = {
 _NON_PDF_EXTENSIONS = (
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".tif", ".tiff",
 )
+_HOST_FAILURE_WINDOW_SECONDS = 900
+_HOST_FAILURE_THRESHOLD = 4
+_host_failure_state: dict[str, tuple[int, float]] = {}
 
 
 def _should_attempt_pdf_url(url: str) -> bool:
@@ -118,6 +122,42 @@ def _should_attempt_pdf_url(url: str) -> bool:
     if "/articles/" in path and not path.endswith(".pdf") and "nature.com" in host:
         return False
     return True
+
+
+def _host_for(url: str) -> str:
+    try:
+        return (urlparse(url).hostname or "").lower()
+    except Exception:
+        return ""
+
+
+def _is_host_cooled_down(url: str) -> bool:
+    host = _host_for(url)
+    if not host:
+        return False
+    count, until = _host_failure_state.get(host, (0, 0.0))
+    now = time.monotonic()
+    if until and now < until:
+        return True
+    if until and now >= until:
+        _host_failure_state.pop(host, None)
+    return False
+
+
+def _record_host_failure(url: str) -> None:
+    host = _host_for(url)
+    if not host:
+        return
+    now = time.monotonic()
+    count, until = _host_failure_state.get(host, (0, 0.0))
+    if until and now >= until:
+        count = 0
+        until = 0.0
+    count += 1
+    if count >= _HOST_FAILURE_THRESHOLD:
+        _host_failure_state[host] = (count, now + _HOST_FAILURE_WINDOW_SECONDS)
+    else:
+        _host_failure_state[host] = (count, until)
 
 
 def _get_referer(url: str) -> str:
@@ -262,6 +302,8 @@ async def _download(
     timeout: int = 60,
     pdf: bool = False,
 ) -> bytes:
+    if _is_host_cooled_down(url):
+        raise aiohttp.ClientConnectionError(f"host cooldown active: {_host_for(url)}")
     headers = _headers_for(url, pdf=pdf)
     ct = aiohttp.ClientTimeout(total=timeout)
     async with _get_limiter():
@@ -269,6 +311,7 @@ async def _download(
         try:
             async with session.get(url, headers=headers, timeout=ct, allow_redirects=True) as resp:
                 if resp.status == 403:
+                    _record_host_failure(url)
                     raise _ForbiddenError(
                         request_info=resp.request_info,
                         history=resp.history,
@@ -276,13 +319,20 @@ async def _download(
                         message="Forbidden",
                         headers=resp.headers,
                     )
+                if resp.status in {404, 405, 418, 429, 500, 502, 503, 504}:
+                    _record_host_failure(url)
                 resp.raise_for_status()
                 return await resp.read()
         except _ssl_mod.SSLCertVerificationError:
             logger.debug("SSL verification failed for %s, retrying without verification", url)
             async with session.get(url, headers=headers, timeout=ct, allow_redirects=True, ssl=_NOSSL) as resp:
+                if resp.status in {403, 404, 405, 418, 429, 500, 502, 503, 504}:
+                    _record_host_failure(url)
                 resp.raise_for_status()
                 return await resp.read()
+        except (aiohttp.ClientConnectionError, aiohttp.ClientPayloadError, asyncio.TimeoutError):
+            _record_host_failure(url)
+            raise
 
 
 async def _download_json(session: aiohttp.ClientSession, url: str, timeout: int = 20) -> dict | None:
@@ -707,6 +757,7 @@ async def fetch_all(
     papers: list[dict],
     max_concurrent: int | None = None,
     on_activity: Any = None,
+    on_progress: Any = None,
 ) -> list[dict]:
     """Concurrently fetch text for all papers.
 
@@ -720,11 +771,48 @@ async def fetch_all(
     total = len(papers)
 
     async with aiohttp.ClientSession(connector=connector, cookie_jar=jar) as session:
+        async def _tracked_fetch(index: int, paper: dict) -> tuple[int, Any]:
+            try:
+                result = await fetch_one(
+                    session, sem, paper, on_activity=on_activity, paper_idx=index + 1, paper_total=total,
+                )
+                return index, result
+            except Exception as exc:
+                return index, exc
+
         tasks = [
-            fetch_one(session, sem, p, on_activity=on_activity, paper_idx=i + 1, paper_total=total)
+            _tracked_fetch(i, p)
             for i, p in enumerate(papers)
         ]
-        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+        raw_results: list[Any] = [None] * total
+        fulltext_success = 0
+        fallback_only = 0
+        failed = 0
+        attempted = 0
+
+        for coro in asyncio.as_completed(tasks):
+            index, result = await coro
+            raw_results[index] = result
+            attempted += 1
+            text = result.get("text") if isinstance(result, dict) else ""
+            text_source = result.get("text_source") if isinstance(result, dict) else "none"
+            if text and text_source in {"pdf", "unpaywall", "pmc", "core", "webpage", "doi_webpage", "s2_oa_pdf"}:
+                fulltext_success += 1
+            elif text:
+                fallback_only += 1
+            else:
+                failed += 1
+            if on_progress:
+                try:
+                    on_progress({
+                        "attempted": attempted,
+                        "fulltext_success": fulltext_success,
+                        "fallback_only": fallback_only,
+                        "failed": failed,
+                        "total": total,
+                    })
+                except Exception:
+                    pass
 
     results: list[dict] = []
     for i, r in enumerate(raw_results):

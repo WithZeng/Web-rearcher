@@ -243,6 +243,7 @@ async def run_pipeline(
 
     if use_planner:
         ctx.emit_activity("Generating search strategy...")
+        _notify("planner")
         ctx = await PlannerAgent().run_timed(ctx)
         _notify("planner")
 
@@ -270,6 +271,7 @@ async def run_pipeline(
             ctx.emit_activity(
                 f"Round {ctx.search_round}: searching {db_names} for ~{ctx.desired_new_candidates} new candidates"
             )
+            _notify("search")
             ctx = await SearchAgent().run_timed(ctx)
             _notify("search")
 
@@ -328,11 +330,13 @@ async def run_pipeline(
                 ctx.retrieval_round += 1
                 ctx.round_number = ctx.retrieval_round
                 ctx.emit_activity(f"Round {ctx.search_round}: first-pass retrieval for {len(ctx.papers)} papers")
+                _notify("retrieval")
                 ctx = await RetrievalAgent().run_timed(ctx)
                 _notify("retrieval")
 
                 ctx.quality_filter_round += 1
                 ctx.round_number = ctx.quality_filter_round
+                _notify("quality_filter")
                 ctx = await QualityFilterAgent().run_timed(ctx)
                 ctx.passed_count = len(ctx.accumulated_passed_papers) + len(ctx.passed_papers)
                 _notify("quality_filter")
@@ -352,10 +356,12 @@ async def run_pipeline(
                         ctx.retry_count,
                         len(ctx.failed_papers),
                     )
+                    _notify("retrieval")
                     ctx = await RetrievalAgent().run_timed(ctx)
                     _notify("retrieval")
                     ctx.quality_filter_round += 1
                     ctx.round_number = ctx.quality_filter_round
+                    _notify("quality_filter")
                     ctx = await QualityFilterAgent().run_timed(ctx)
                     ctx.passed_count = len(ctx.accumulated_passed_papers) + len(ctx.passed_papers)
                     _notify("quality_filter")
@@ -413,6 +419,7 @@ async def run_pipeline(
         )
     else:
         ctx.emit_activity(f"Searching {db_names}...")
+        _notify("search")
         ctx = await SearchAgent().run_timed(ctx)
         _notify("search")
         if not ctx.papers:
@@ -464,10 +471,12 @@ async def run_pipeline(
             f"Starting full-text retrieval for {len(ctx.papers)} papers "
             f"(raw {raw_count} / deduped {deduped_count} / blacklist {blacklist_skipped} / history {hist_skipped})"
         )
+        _notify("retrieval")
         ctx = await RetrievalAgent().run_timed(ctx)
         _notify("retrieval")
 
         ctx.emit_activity(f"Scoring quality for {len(ctx.papers_with_text)} papers...")
+        _notify("quality_filter")
         ctx = await QualityFilterAgent().run_timed(ctx)
         _notify("quality_filter")
         ctx.emit_activity(
@@ -482,8 +491,10 @@ async def run_pipeline(
                 f"Retry retrieval [{ctx.retry_count}]: refetching {len(ctx.failed_papers)} papers that failed quality screening"
             )
             logger.info("Retry %d: re-fetching %d failed papers", ctx.retry_count, len(ctx.failed_papers))
+            _notify("retrieval")
             ctx = await RetrievalAgent().run_timed(ctx)
             _notify("retrieval")
+            _notify("quality_filter")
             ctx = await QualityFilterAgent().run_timed(ctx)
             _notify("quality_filter")
 
@@ -498,15 +509,18 @@ async def run_pipeline(
         stage_name = "extraction_sub_agents"
         ctx.round_number = ctx.search_round if ctx.rolling_mode else 0
         ctx.emit_activity(f"Launching 4 sub-agents to extract {n} papers...")
+        _notify(stage_name)
         ctx = await _run_sub_agents_parallel(ctx)
         _notify(stage_name)
         ctx.emit_activity("Merging extraction results...")
+        _notify("extraction_merge")
         _merge_sub_results(ctx)
         _notify("extraction_merge")
     else:
         stage_name = "extraction"
         ctx.round_number = ctx.search_round if ctx.rolling_mode else 0
         ctx.emit_activity(f"Running unified extraction for {n} papers...")
+        _notify(stage_name)
         ctx = await ExtractionAgent().run_timed(ctx)
         _notify(stage_name)
 
@@ -517,6 +531,7 @@ async def run_pipeline(
 
     ctx.round_number = ctx.search_round if ctx.rolling_mode else 0
     ctx.emit_activity(f"Reviewing {len(ctx.rows)} extracted rows...")
+    _notify("reviewer")
     ctx = await ReviewerAgent().run_timed(ctx)
     _notify("reviewer")
 

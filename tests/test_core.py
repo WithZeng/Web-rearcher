@@ -109,6 +109,18 @@ def test_should_attempt_pdf_url_skips_obvious_non_pdf_targets():
     assert _should_attempt_pdf_url("https://www.nature.com/articles/abc123.pdf") is True
 
 
+def test_host_cooldown_triggers_after_repeated_failures():
+    from lit_researcher import fetch as fetch_module
+
+    fetch_module._host_failure_state.clear()
+    url = "https://example.com/file.pdf"
+
+    for _ in range(fetch_module._HOST_FAILURE_THRESHOLD):
+        fetch_module._record_host_failure(url)
+
+    assert fetch_module._is_host_cooled_down(url) is True
+
+
 def test_search_papers_rolling_with_stats_filters_seen_candidates():
     from lit_researcher import search as search_module
 
@@ -591,6 +603,29 @@ def test_merge_history_rows_excludes_duplicate_doi_from_unpushed_if_other_copy_w
     merged_unpushed = merge_history_rows(history, pushed_filter="unpushed")
 
     assert merged_unpushed == []
+
+
+def test_count_core_experiment_gate_splits_core_vs_candidate_only():
+    from lit_researcher.ui_helpers import count_core_experiment_gate
+
+    rows = [
+        {
+            "_data_quality": 0.4,
+            "drug_name": "DOX",
+            "gelma_concentration": "5",
+            "release_time": "72",
+        },
+        {
+            "_data_quality": 0.4,
+            "drug_name": "DOX",
+            "gelma_concentration": "5",
+        },
+    ]
+
+    counts = count_core_experiment_gate(rows)
+
+    assert counts["core_gate_count"] == 1
+    assert counts["candidate_only_count"] == 1
 
 
 # -- output: JSON and BibTeX --

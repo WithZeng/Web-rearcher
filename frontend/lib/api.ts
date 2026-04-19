@@ -339,6 +339,11 @@ export interface PipelineTaskSummary {
   papers_found?: number | null;
   papers_passed?: number | null;
   rows_extracted?: number | null;
+  retrieval_attempted?: number | null;
+  retrieval_total?: number | null;
+  retrieval_fulltext_success?: number | null;
+  retrieval_fallback_only?: number | null;
+  retrieval_failed?: number | null;
   queue_position?: number | null;
 }
 
@@ -420,6 +425,8 @@ export interface MergeResult {
   dedup_discarded?: number;
   pushed_count: number;
   unpushed_count: number;
+  core_gate_count?: number;
+  candidate_only_count?: number;
   rows: Record<string, unknown>[];
 }
 
