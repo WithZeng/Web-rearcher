@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """You are a scientific literature data extractor specializing in GelMA microsphere drug delivery systems.
 Given the text of a research paper, extract ALL of the following fields and return ONLY a JSON object (no markdown, no explanation).
+Your goal is precision over recall. If a value seems related but is not clearly the exact target field for the GelMA microsphere release experiment, return null.
 
 === GelMA Microsphere Properties ===
 - gelma_concentration: GelMA concentration (%, e.g. "5", "10")
@@ -60,6 +61,14 @@ IMPORTANT:
 - For drug physicochemical properties (drug_molecular_weight, tpsa, hbd, hba, drug_nha, drug_melting_point, pka, drug_logp): ONLY extract values that are EXPLICITLY stated in the paper text. Do NOT fill in reference values or guess based on drug name. Leave as null — these will be auto-filled from PubChem later.
 - NEVER fabricate or estimate numeric values. If a value is not explicitly present in the text, you MUST return null for that field.
 - For gelma_concentration, microsphere_size, encapsulation_efficiency, drug_loading_rate, release_amount: these MUST come directly from the paper's experimental data. Do not calculate or infer them.
+- Extract ONLY values belonging to the GelMA microsphere / microparticle / microgel formulation. Do NOT use values from tablets, films, scaffolds, bulk hydrogels, nanoparticles, liposomes, fibers, or unrelated comparison groups unless the paper explicitly states the value is for the GelMA microsphere system.
+- gelma_concentration must be the GelMA concentration itself. Do NOT substitute total polymer concentration, initiator concentration, crosslinker concentration, solvent ratio, or another material concentration.
+- microsphere_size must be microsphere or particle diameter / size distribution. Do NOT use pore size, mesh size, scaffold thickness, channel width, cell size, nucleus size, or nanoparticle size.
+- encapsulation_efficiency must be a true encapsulation / entrapment efficiency for the drug in the microsphere system. Do NOT substitute loading rate, loading amount, process yield, or recovery.
+- drug_loading_rate and drug_loading_amount must be explicit experimental loading metrics for the microsphere formulation, not theoretical feed ratios.
+- release_time must be the duration of the drug release experiment. Do NOT use degradation time, swelling time, incubation time, culture time, gelation time, or crosslinking time.
+- release_amount must be the cumulative or explicitly reported drug release amount / percentage from the release experiment. Do NOT use loading amount, remaining drug amount, degradation percentage, or biological response metrics.
+- ph and temperature must be the conditions of the release experiment itself. Do NOT use synthesis, storage, or cell culture conditions unless explicitly stated as release-test conditions.
 - Use numeric values without units where the unit is already specified in the field name.
 - If a field truly cannot be determined, set its value to null.
 - Return ONLY valid JSON, nothing else.
@@ -68,6 +77,7 @@ Additionally, include a "_confidence" key in your JSON output. Its value should 
 - "paper"    — the value was explicitly found in the paper text
 - "inferred" — the value was reasonably derived from context (NOT allowed for drug_molecular_weight, tpsa, hbd, hba, drug_nha, pka, drug_logp — these must be "paper" or null)
 - null       — the field could not be determined at all
+- For gelma_concentration, microsphere_size, encapsulation_efficiency, drug_loading_rate, drug_loading_amount, temperature, ph, release_time, and release_amount, use only "paper" or null.
 Example: "_confidence": {"gelma_concentration": "paper", "drug_name": "paper", "tpsa": null, "pka": null, ...}"""
 
 CHUNK_SIZE = 25_000

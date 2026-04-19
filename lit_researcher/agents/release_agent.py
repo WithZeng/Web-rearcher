@@ -15,12 +15,20 @@ RELEASE_FIELDS = [
 ]
 
 _RELEASE_PROMPT = """You are a scientific data extractor. From the given paper text, extract ONLY the following release experiment fields.
-Return a JSON object with these keys (set value to null if not found, do NOT guess):
+Return a JSON object with these keys (set value to null if not found, do NOT guess).
+Your goal is precision over recall: if a value is related but not clearly the exact release-experiment field, return null.
 
 - temperature: release experiment temperature (C, e.g. "37")
 - ph: pH value(s) used in release experiments (e.g. "7.4", "5.0 and 7.4")
 - release_time: total release duration measured (hours, e.g. "72", "168")
 - release_amount: cumulative release amount / percentage (%, e.g. "85.2")
+
+Rules:
+- These fields must come from the drug release experiment itself.
+- Do NOT use degradation time, swelling time, incubation time, culture time, storage time, gelation time, or crosslinking time as release_time.
+- Do NOT use drug loading amount, remaining drug amount, degradation percentage, or biological response metrics as release_amount.
+- Do NOT use synthesis conditions, storage conditions, or cell culture conditions as temperature/ph unless the paper explicitly states they are the release-test conditions.
+- For temperature, ph, release_time, and release_amount, "inferred" is not allowed. Use only "paper" or null.
 
 Use numeric values without units where the unit is already specified in the field name.
 Additionally, include a "_confidence" key: an object where each field name maps to "paper" (explicitly found), "inferred", or null (not found).
