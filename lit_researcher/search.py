@@ -206,7 +206,7 @@ def _search_openalex_batch(
         "search": query,
         "per-page": min(max(batch_size, 1), 200),
         "cursor": cursor_state.get("cursor") or "*",
-        "select": "id,display_name,doi,abstract_inverted_index,abstract,open_access,ids",
+        "select": "id,display_name,doi,abstract_inverted_index,open_access,ids",
     }
     resp = _get_with_retry("https://api.openalex.org/works", params)
     payload = resp.json()

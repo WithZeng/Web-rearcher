@@ -78,6 +78,29 @@ def test_search_papers_with_stats_reports_counts():
     assert stats["db_counts"] == {"DBA": 2, "DBB": 2}
 
 
+def test_search_openalex_batch_uses_supported_select_fields():
+    from lit_researcher import search as search_module
+
+    captured: dict[str, object] = {}
+
+    class _FakeResponse:
+        def json(self):
+            return {"results": [], "meta": {"next_cursor": None}}
+
+    def fake_get(url: str, params: dict):
+        captured["url"] = url
+        captured["params"] = params
+        return _FakeResponse()
+
+    with patch.object(search_module, "_get_with_retry", side_effect=fake_get):
+        results, state = search_module._search_openalex_batch("gelma", 10, {})
+
+    assert results == []
+    assert state["exhausted"] is True
+    assert captured["url"] == "https://api.openalex.org/works"
+    assert captured["params"]["select"] == "id,display_name,doi,abstract_inverted_index,open_access,ids"
+
+
 def test_search_papers_rolling_with_stats_filters_seen_candidates():
     from lit_researcher import search as search_module
 
